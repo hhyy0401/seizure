@@ -1,0 +1,82 @@
+# ============================================================
+# Heavy / generated / experiment outputs
+# ============================================================
+# 1.3 GB+ — model checkpoints, tfevents, logs (regenerate by training)
+runs/
+
+# any nested graph_cache (e.g. evobrain/graph_cache, symlink to scratch)
+graph_cache/
+**/graph_cache/
+
+*.pth
+*.pth.tar
+*.pt
+*.ckpt
+events.out.tfevents.*
+*.tfevents.*
+
+# ============================================================
+# Backup / personal notes (GCP/Phoenix paths, NEDC, host IPs)
+# ============================================================
+backup/
+pipeline_backup_*.tar.gz
+*.tar.gz
+*.tar
+*.zip
+
+# ============================================================
+# Caches & build artifacts
+# ============================================================
+__pycache__/
+*.py[codz]
+*.so
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================
+# Editor / OS
+# ============================================================
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+.ipynb_checkpoints/
+
+# ============================================================
+# Env
+# ============================================================
+.env
+.env.*
+venv/
+.venv/
+
+# ============================================================
+# Timestamped training logs
+# ============================================================
+evobrain/logs/
+
+# ============================================================
+# Third-party baselines (separate licensing; clone separately)
+# ============================================================
+external_baselines/
+
+# ============================================================
+# Large binary scientific arrays
+# ============================================================
+*.npz
+*.npy
+*.h5
+*.hdf5
+
+# ============================================================
+# Re-include text/pkl markers (small, important)
+# ============================================================
+!evobrain/data/file_markers_*/**/*.txt
+!evobrain/data/file_markers_*/**/*.pkl

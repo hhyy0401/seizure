@@ -1,0 +1,116 @@
+================================================================
+  EvoBrain / light_st_hyper — Phoenix RTX PRO 6000 Blackwell 셋업
+  대상: gpu-rtxpro-blackwell  (GCP와 동일 GPU)
+  GCP 원본: backup/PHOENIX_SETUP.txt
+================================================================
+
+요약: **GCP 셋업 그대로 옮기는 게 목표.** 기존 cu121 conda env는
+Blackwell sm_120 미지원 → cu128 venv 새로 빌드해야 함.
+
+
+[1] Phoenix gpu-rtxpro-blackwell 사양 (GCP와 비교)
+----------------------------------------------------------------
+                       GCP (원본)              Phoenix rtxpro
+GPU                  : RTX PRO 6000 Blackwell  RTX PRO 6000 Blackwell  ★ 동일
+VRAM                 : 96 GB                   96 GB                   ★ 동일
+SM                   : sm_120                  sm_120                  ★ 동일
+GPU/node             : 1                       8
+CPU 종류             : AMD EPYC 9B45           Intel Granite Rapids
+CPU core             : 48 vCPU (24 physical)   64 physical
+Memory               : 176 GiB                 2063 GiB
+드라이버/CUDA        : 580 / runtime 13.0      (Phoenix 측 cu128 모듈 사용)
+
+→ GPU 자체 행동은 동일. CPU는 Intel ↔ AMD 차이 있지만 PyTorch에서 의미 없음.
+→ 노드 1개 점유 가능하면 192 vCPU / 2 TB RAM 다 사용 가능 (남이 안 쓸 때)
+→ 노드 수: 3개 → 8 GPU × 3 = 총 24 GPU (보통 한가)
+
+
+[2] CUDA / torch 호환
+----------------------------------------------------------------
+Blackwell sm_120 = CUDA 12.8 wheel 필요.
+
+❌ 기존 conda env 사용 불가:
+   /storage/scratch1/3/hkim3239/.conda/envs/evobrain
+   (torch 2.5.1 + cu121 → sm_120 에서 unsupported GPU 에러)
+
+✅ 새 venv (= GCP의 ~/eeg/venv 그대로 옮긴 것):
+   /storage/scratch1/3/hkim3239/.conda/envs/evobrain_cu128
+   torch 2.9.1 + cu128
+   mamba-ssm (build), causal-conv1d (build)
+   torch-scatter for torch-2.9.0+cu128
+   pyg + 나머지 requirements_phoenix.txt
+
+빌드 sbatch:
+   sbatch /storage/project/r-nimam6-0/hkim3239/disease/sbatch/setup_env_blackwell.sbatch
+   (gpu-rtxpro-blackwell 에서 1 GPU 점유, 약 30~60분, mamba-ssm 빌드 5~10분)
+
+
+[3] sbatch 헤더 (rtxpro-blackwell 용)
+----------------------------------------------------------------
+GCP 셋업과 매칭하려면:
+
+#SBATCH -p gpu-rtxpro-blackwell
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=24       # GCP physical core 매칭 (필요시 48)
+#SBATCH --mem=192G               # GCP 176G 보다 약간 넉넉히
+#SBATCH -t 12:00:00              # 학습 6~10h 기준
+
+DataLoader num_workers: 4~8  (GCP에서 4 사용, 8까지 올려도 OK)
+
+
+[4] 학습 명령 (matched setting)
+----------------------------------------------------------------
+ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain_cu128
+
+sbatch -p gpu-rtxpro-blackwell \
+       --cpus-per-task=24 --mem=192G \
+       --export=ALL,ENV_PATH=$ENV_PATH,TRAIN_BS=128,TEST_BS=256,NUM_WORKERS=8 \
+       /storage/project/r-nimam6-0/hkim3239/disease/sbatch/train_light_st_hyper.sbatch
+
+# EvoBrain full:
+sbatch -p gpu-rtxpro-blackwell \
+       --cpus-per-task=24 --mem=192G \
+       --export=ALL,ENV_PATH=$ENV_PATH,TRAIN_BS=128,TEST_BS=256,NUM_WORKERS=8 \
+       /storage/project/r-nimam6-0/hkim3239/disease/sbatch/train_evobrain.sbatch
+
+※ ENV_PATH / NUM_WORKERS override를 sbatch 가 지원하도록 갱신 필요
+   → 학습 sbatch 파일에서 ENV_PATH=${ENV_PATH:-기본값} 으로 변경 (이 가이드와 함께 적용)
+
+
+[5] 배치 사이즈 — VRAM 96GB 그대로 활용
+----------------------------------------------------------------
+GCP에서 쓰던 그대로:
+  TRAIN_BS=128, TEST_BS=256, max_seq_len=12
+  60s clip 시: TRAIN_BS=32, TEST_BS=64 (12s 의 1/4)
+
+light_st_hyper 류 (작은 모델)는 더 키워도 됨 (BS=256 시도 가능).
+
+
+[6] 데이터 / 코드 경로 (다른 가이드들과 동일)
+----------------------------------------------------------------
+코드               : /storage/project/r-nimam6-0/hkim3239/disease/evobrain
+sbatch             : /storage/project/r-nimam6-0/hkim3239/disease/sbatch
+학습 체크포인트    : disease/runs/  (모델+log+config, lite)
+신규 학습 출력     : /storage/scratch1/3/hkim3239/eeg/runs/  (heavy)
+graph_cache        : disease/evobrain/graph_cache → scratch symlink
+venv (Blackwell)   : /storage/scratch1/3/hkim3239/.conda/envs/evobrain_cu128   ← 빌드해야 함
+venv (전처리)      : ~/miniconda3/envs/fastenv (이미 있음)
+
+
+[7] 한 줄 quick start (env 빌드 후)
+----------------------------------------------------------------
+# 1회: env 빌드
+sbatch /storage/project/r-nimam6-0/hkim3239/disease/sbatch/setup_env_blackwell.sbatch
+
+# 학습 (env 빌드 끝나면)
+ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain_cu128
+sbatch -p gpu-rtxpro-blackwell --cpus-per-task=24 --mem=192G \
+    --export=ALL,ENV_PATH=$ENV_PATH,NUM_WORKERS=8,TAG=rtxpro \
+    /storage/project/r-nimam6-0/hkim3239/disease/sbatch/train_light_st_hyper.sbatch
+
+
+================================================================
+  생성: 2026-05-15 (Phoenix RTX PRO 6000 Blackwell 셋업 가이드)
+  GCP 원본 doc: backup/PHOENIX_SETUP.txt
+  RTX 6000 (24GB) 가이드: PHOENIX_SETUP_rtx6000.txt
+================================================================

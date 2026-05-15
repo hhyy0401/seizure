@@ -1,0 +1,102 @@
+================================================================
+  EvoBrain / light_st_hyper — Phoenix RTX 6000 셋업 가이드
+  대상: gpu-rtx6000 파티션 (Quadro RTX 6000, 24 GB VRAM, sm_75)
+  GCP 원본 셋업은 backup/PHOENIX_SETUP.txt 참고 (RTX PRO 6000 Blackwell, 96 GB)
+================================================================
+
+
+[1] Phoenix gpu-rtx6000 노드 사양
+----------------------------------------------------------------
+GPU        : NVIDIA Quadro RTX 6000  (Turing, sm_75)
+             - VRAM: 24 GB
+             - GPU/node: 4
+             - 노드 수: 약 34 → 풀  ~136 GPU
+             - 큐: 보통 붐빔 (사용 전 squeue -p gpu-rtx6000 로 체크)
+CPU        : Intel Xeon Gold 6226 cascadelake, 24 core
+Memory     : 385 GB (일부 노드 772 GB)
+TIMELIMIT  : 3-00:00:00 (3일)
+
+비교:
+  GCP 원본 (Blackwell 96GB) : VRAM 96 / SM=sm_120
+  Phoenix gpu-rtx6000       : VRAM 24 / SM=sm_75   ← 이 가이드
+  Phoenix gpu-l40s          : VRAM 48 / SM=sm_89   ← 중간 옵션
+  Phoenix gpu-a100          : VRAM 80 / SM=sm_80
+  Phoenix gpu-rtxpro-blackwell : VRAM 96 / SM=sm_120 (GCP와 동일)
+
+
+[2] CUDA / torch 호환성
+----------------------------------------------------------------
+RTX 6000 (Turing sm_75) → cu118 이상 wheel 모두 동작.
+**기존 conda env 그대로 사용 가능**:
+  /storage/scratch1/3/hkim3239/.conda/envs/evobrain
+  → torch 2.5.1 + cu121, mamba_ssm 2.2.6.post3, pyg 2.3.1
+  → sm_75 지원, 새 코드 (LightEvoBrain 등) import OK 검증됨
+
+**새로 빌드할 필요 없음.** 만약 다시 만든다면:
+  sbatch sbatch/setup_env_evobrain.sbatch   # 기존 스크립트 그대로
+
+
+[3] sbatch 헤더 (gpu-rtx6000 용)
+----------------------------------------------------------------
+#SBATCH -p gpu-rtx6000
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH -t 12:00:00    # gpu-rtx6000 walltime 한도는 3일
+
+학습 sbatch 사용 예시:
+  sbatch -p gpu-rtx6000 sbatch/train_evobrain.sbatch
+  sbatch -p gpu-rtx6000 --export=ALL,EDGE_TYPE=light_dot sbatch/train_light_st_hyper.sbatch
+
+또는 sbatch 파일 자체 수정:
+  -#SBATCH -p gpu-a100
+  +#SBATCH -p gpu-rtx6000
+
+
+[4] 24GB VRAM 에서의 배치 사이즈 조정
+----------------------------------------------------------------
+GCP 96GB → 24GB (= 25%) 줄어든 만큼 batch 축소 필요.
+
+기존 train sbatch 기본값:
+  TRAIN_BS=128, TEST_BS=256, max_seq_len=12
+
+권장 (출발점, OOM 시 절반씩 줄이기):
+  TRAIN_BS=32, TEST_BS=64     (evobrain full, mamba+GCN, 12s)
+  TRAIN_BS=64, TEST_BS=128    (light_st_hyper 류, 더 작은 모델)
+  60s clip 은 추가로 절반 더 줄이기
+
+오버라이드:
+  sbatch -p gpu-rtx6000 --export=ALL,TRAIN_BS=32,TEST_BS=64 \
+         sbatch/train_evobrain.sbatch
+
+
+[5] 데이터 / 코드 경로 (재확인)
+----------------------------------------------------------------
+코드          : /storage/project/r-nimam6-0/hkim3239/disease/evobrain
+sbatch        : /storage/project/r-nimam6-0/hkim3239/disease/sbatch
+체크포인트 archive : /storage/project/r-nimam6-0/hkim3239/disease/runs (모델+log+config)
+신규 학습 출력  : /storage/scratch1/3/hkim3239/eeg/runs (heavy: hidden.csv, regenerable)
+CHB-MIT raw   : /storage/scratch1/3/hkim3239/data/chb_mit
+CHB-MIT h5    : /storage/scratch1/3/hkim3239/data/chb_mit_resampled
+TUSZ raw      : /storage/scratch1/3/hkim3239/eeg/tusz/v2.0.6 (다운 중)
+TUSZ h5       : /storage/scratch1/3/hkim3239/eeg/tusz_resampled (전처리시)
+graph_cache   : disease/evobrain/graph_cache → scratch symlink
+venv (학습)   : /storage/scratch1/3/hkim3239/.conda/envs/evobrain
+venv (전처리) : ~/miniconda3/envs/fastenv
+
+
+[6] 한 줄 quick start (rtx6000)
+----------------------------------------------------------------
+sbatch -p gpu-rtx6000 \
+    --export=ALL,TRAIN_BS=32,TEST_BS=64,NUM_EPOCHS=50,TAG=rtx6k \
+    /storage/project/r-nimam6-0/hkim3239/disease/sbatch/train_light_st_hyper.sbatch
+
+# 또는 EvoBrain full:
+sbatch -p gpu-rtx6000 \
+    --export=ALL,TRAIN_BS=32,TEST_BS=64,NUM_EPOCHS=50,TAG=rtx6k \
+    /storage/project/r-nimam6-0/hkim3239/disease/sbatch/train_evobrain.sbatch
+
+================================================================
+  생성: 2026-05-15 (Phoenix RTX 6000 셋업 가이드)
+  원본 GCP 셋업 doc: backup/PHOENIX_SETUP.txt
+================================================================

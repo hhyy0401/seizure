@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Time-then-Graph EEG Models — Slides</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --accent: #d62728;
+    --green: #2ca02c;
+    --purple: #9467bd;
+    --orange: #ff7f0e;
+    --gray: #555;
+    --lgray: #b0b0b0;
+    --panel: #f6f6f6;
+    --border: #d8d8d8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Helvetica Neue", "Segoe UI", "Noto Sans KR", sans-serif;
+    overflow: hidden;
+  }
+  #deck {
+    position: relative;
+    width: 100vw; height: 100vh;
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    padding: 4.5vh 6vw;
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .slide.active { display: flex; }
+  .slide h1 {
+    font-size: 2.4em;
+    margin: 0 0 0.5em;
+    border-bottom: 3px solid var(--fg);
+    padding-bottom: 0.2em;
+  }
+  .slide h2 {
+    font-size: 1.5em;
+    margin: 1em 0 0.4em;
+    color: var(--gray);
+  }
+  .slide h3 {
+    font-size: 1.15em;
+    margin: 0.8em 0 0.3em;
+    color: var(--fg);
+  }
+  .slide p, .slide li {
+    font-size: 1.05em;
+    line-height: 1.55;
+  }
+  .slide ul { margin: 0.3em 0 0.8em 1.2em; padding: 0; }
+  .slide li { margin: 0.25em 0; }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.95em;
+    background: var(--panel);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .formula {
+    background: var(--panel);
+    border-left: 4px solid var(--accent);
+    padding: 0.8em 1.2em;
+    margin: 0.6em 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 1.05em;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+  .footer {
+    position: absolute;
+    bottom: 1.5vh; left: 0; right: 0;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9em;
+  }
+  .nav {
+    position: fixed;
+    bottom: 1.5vh; right: 2vw;
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    color: white;
+    font-size: 0.85em;
+    margin-right: 0.4em;
+  }
+  .pill-evo { background: var(--gray); }
+  .pill-attn { background: var(--lgray); color: #333; }
+  .pill-plv { background: var(--accent); }
+  .pill-dyn { background: var(--green); }
+  .pill-stat { background: var(--purple); }
+  .pill-noplv { background: var(--orange); }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 2em; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1em 1.3em;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 0.8em; font-size: 1.02em; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel); font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.best td { background: #fffbe6; font-weight: 600; }
+
+  .bar-row { display: flex; align-items: center; margin: 0.35em 0; font-size: 1.02em; }
+  .bar-label { width: 130px; }
+  .bar-track { flex: 1; height: 22px; background: var(--panel); border-radius: 4px; position: relative; }
+  .bar-fill { height: 100%; border-radius: 4px; }
+  .bar-num { width: 130px; text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
+
+  .title-slide { justify-content: center; align-items: flex-start; }
+  .title-slide h1 { border: none; font-size: 3em; }
+  .title-slide .sub { font-size: 1.3em; color: var(--muted); }
+
+  .pseudo {
+    background: #0f1419;
+    color: #e6e6e6;
+    padding: 0.9em 1.2em;
+    border-radius: 6px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.95em;
+    line-height: 1.55;
+    overflow-x: auto;
+  }
+  .pseudo .kw { color: #ff79c6; }
+  .pseudo .cm { color: #6c7986; font-style: italic; }
+  .pseudo .va { color: #8be9fd; }
+</style>
+</head>
+<body>
+<div id="deck">
+
+<!-- 1. Title -->
+<section class="slide active title-slide">
+  <h1>Time-then-Graph for EEG Seizure Detection</h1>
+  <p class="sub">CHB-MIT, 22-channel bipolar, 12&nbsp;s clips · 6 models 비교</p>
+  <p class="sub" style="margin-top:2em;">Baseline: <b>EvoBrain</b> (Kotoge et al., NeurIPS&nbsp;2025) · Target: 동등하거나 우수한 AUROC를 <b>20×+ 빠르게</b></p>
+</section>
+
+<!-- 2. TTG backbone overview -->
+<section class="slide">
+  <h1>Time-then-Graph (TTG) Backbone</h1>
+  <p>각 채널을 시간축에서 먼저 인코딩한 뒤 → 채널 간 그래프 추론.</p>
+  <h2>공통 파이프라인</h2>
+  <div class="formula">
+    x ∈ ℝ<sup>B×N×T×D</sup> &nbsp;(N=22 채널, T=12 step, D=100 FFT bin)<br>
+    ──&gt; <b>per-channel Bi-Mamba</b> &nbsp;→&nbsp; H ∈ ℝ<sup>B×N×T×H</sup><br>
+    ──&gt; <b>graph block</b> (모델별로 다름) &nbsp;→&nbsp; Z ∈ ℝ<sup>B×N×H</sup><br>
+    ──&gt; <b>readout</b> (max / PMA) &nbsp;→&nbsp; logit
+  </div>
+  <h2>왜 TTG?</h2>
+  <ul>
+    <li>EvoBrain은 <b>매 timestep마다</b> 동적 그래프를 재계산 → 데이터로더 병목 (47&nbsp;ms/sample)</li>
+    <li>TTG는 시간축을 먼저 압축해서 그래프 연산 <b>한 번 또는 K번</b>으로 끝냄</li>
+    <li>본 연구의 모든 신규 모델은 <b>같은 Bi-Mamba 백본을 공유</b>하고 그래프 블록만 달리함</li>
+  </ul>
+</section>
+
+<!-- 3. EvoBrain (baseline) -->
+<section class="slide">
+  <h1><span class="pill pill-evo">EvoBrain</span> Baseline</h1>
+  <p>Kotoge et al., NeurIPS&nbsp;2025 Spotlight. <b>Dual Mamba (node + edge) + LapPE + GCN</b>.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        H<sub>t</sub> = NodeMamba(x<sub>:,:,t,:</sub>)<br>
+        A<sub>t</sub>[i,j] = corr(x<sub>i,t-w:t</sub>, x<sub>j,t-w:t</sub>)<br>
+        Â<sub>t</sub> = top-k(A<sub>t</sub>) ⊙ row-norm<br>
+        E<sub>t</sub> = EdgeMamba(Â<sub>t</sub>)<br>
+        Z<sub>t</sub> = GCN(H<sub>t</sub>, Â<sub>t</sub>) + LapPE(Â<sub>t</sub>)<br>
+        ŷ = MLP(max-pool<sub>n,t</sub> Z<sub>t</sub>)
+      </div>
+    </div>
+    <div>
+      <h3>특징</h3>
+      <ul>
+        <li>그래프가 <b>매 시점</b>마다 재계산됨 (T=12)</li>
+        <li>Pearson 상관관계 → top-3 sparsify</li>
+        <li>LapPE = Laplacian eigenvector positional encoding</li>
+        <li>Edge 정보도 시간축으로 Mamba 처리</li>
+      </ul>
+      <h3>비용</h3>
+      <ul>
+        <li>Params <b>184K</b></li>
+        <li>Dataloader 47&nbsp;ms/sample (correlation이 88% 차지)</li>
+        <li>총 wallclock <b>~53&nbsp;분</b> (50 epoch + 4 eval)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Light-Attn (baseline) -->
+<section class="slide">
+  <h1><span class="pill pill-attn">Light-Attn</span> Baseline</h1>
+  <p>가장 단순한 lightweight 기준선. 그래프를 <b>한 번의 self-attention</b>으로 대체.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        H = BiMamba(x) &nbsp;∈ ℝ<sup>B×N×T×H</sup><br>
+        H̄ = mean<sub>t</sub>(H) &nbsp;∈ ℝ<sup>B×N×H</sup><br>
+        Q,K,V = Linear(H̄)<br>
+        A = softmax(QK<sup>⊤</sup>/√d)<br>
+        Z = A·V<br>
+        ŷ = MLP(max<sub>n</sub>(Z))
+      </div>
+    </div>
+    <div>
+      <h3>특징</h3>
+      <ul>
+        <li>그래프 priors 없음 — 완전 학습 기반</li>
+        <li>시간축은 평균으로 압축 → 그래프 한 번만</li>
+        <li>가장 작은 모델 (88K)</li>
+      </ul>
+      <h3>예상</h3>
+      <ul>
+        <li>구조적 정보 부족으로 AUROC 가장 낮을 것</li>
+        <li>하지만 dataloader가 <code>graph_type=none</code>이라 매우 빠름</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 5. PLV -->
+<section class="slide">
+  <h1><span class="pill pill-plv">PLV</span> (light_mamba_band_plv)</h1>
+  <p>주파수 대역별 <b>Phase-Locking Value</b>로 신경과학적 prior를 그래프에 주입.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        <span style="color:var(--accent)">// 5 bands: δ, θ, α, β, γ</span><br>
+        for band b ∈ {δ,θ,α,β,γ}:<br>
+        &nbsp;&nbsp;x<sup>b</sup> = bandpass(raw, b)<br>
+        &nbsp;&nbsp;φ<sub>i</sub><sup>b</sup>(t) = arg(Hilbert(x<sup>b</sup><sub>i</sub>))<br>
+        &nbsp;&nbsp;PLV<sup>b</sup>[i,j] = |⟨e<sup>i(φᵢ−φⱼ)</sup>⟩<sub>t</sub>|<br>
+        &nbsp;&nbsp;Â<sup>b</sup> = top-k(PLV<sup>b</sup>) · row-norm<br>
+        H̄ = mean<sub>t</sub>(BiMamba(x))<br>
+        Z<sup>b</sup> = GCN(H̄, Â<sup>b</sup>) &nbsp;(5 branches)<br>
+        g = softmax(MLP(state<sub>Mamba</sub>))<br>
+        Z = Σ<sub>b</sub> g<sup>b</sup> · Z<sup>b</sup>
+      </div>
+    </div>
+    <div>
+      <h3>특징</h3>
+      <ul>
+        <li>PLV ∈ [0,1]: 두 채널의 <b>위상 동기화 정도</b></li>
+        <li>발작 동안 특정 band의 동기화가 급격히 변함 → 신경생리학적 motivation</li>
+        <li>PLV는 <b>clip 단위로 한 번</b> 계산 (per-timestep ✗) → 빠름</li>
+        <li>5개 branch를 <b>Mamba state-gated fusion</b>으로 결합</li>
+      </ul>
+      <h3>비용</h3>
+      <ul>
+        <li>Params <b>184K</b> · ~2&nbsp;분</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 6. Dyn-Hyper -->
+<section class="slide">
+  <h1><span class="pill pill-dyn">Dyn-Hyper</span> (light_dyn_hyper, C+)</h1>
+  <p>채널이 <b>여러 hyperedge에 동시 소속</b>하는 soft membership을 <b>시간에 따라 변하는</b> prototype으로 학습.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        H<sub>t</sub> = BiMamba(x)[:,:,t,:]<br>
+        <span style="color:var(--green)">// time-evolving prototypes</span><br>
+        Q<sub>t</sub> = MLP<sub>query</sub>(mean<sub>n</sub>(H<sub>t</sub>))<br>
+        &nbsp;&nbsp;Q<sub>t</sub> ∈ ℝ<sup>E<sub>h</sub>×d</sup>, E<sub>h</sub>=8<br>
+        <span style="color:var(--green)">// soft membership</span><br>
+        M<sub>t</sub>[n,e] = σ(⟨H<sub>t</sub>[n], Q<sub>t</sub>[e]⟩ / √d)<br>
+        <span style="color:var(--green)">// 2-layer hypergraph conv</span><br>
+        H'<sub>t</sub> = HGConv(H<sub>t</sub>, M<sub>t</sub>) ×2<br>
+        Z = PMA(mean<sub>t</sub>(H'<sub>t</sub>))
+      </div>
+    </div>
+    <div>
+      <h3>특징</h3>
+      <ul>
+        <li>일반 GCN: 채널 ↔ 채널 1:1 엣지</li>
+        <li>Hypergraph: 채널 ↔ 그룹 (한 엣지에 여러 채널)</li>
+        <li>발작은 <b>다중 영역이 동시에 활성화</b> → hypergraph가 자연스러움</li>
+        <li>Prototype <b>Q<sub>t</sub>가 매 시점마다 바뀜</b> (DETR object queries 패턴)</li>
+        <li>PMA = Set Transformer readout (learnable seed query)</li>
+      </ul>
+      <h3>비용</h3>
+      <ul>
+        <li>Params <b>295K</b> · ~3&nbsp;분</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Static-Hyper -->
+<section class="slide">
+  <h1><span class="pill pill-stat">Static-Hyper</span> (light_static_hyper, C-ab)</h1>
+  <p>Dyn-Hyper의 ablation. Prototype을 <b>고정된 학습 파라미터</b>로 만듦.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        H<sub>t</sub> = BiMamba(x)[:,:,t,:]<br>
+        <span style="color:var(--purple)">// fixed prototypes (learned)</span><br>
+        Q<sub>static</sub> ∈ ℝ<sup>E<sub>h</sub>×d</sup>  (nn.Parameter)<br>
+        <span style="color:var(--purple)">// only membership varies in t</span><br>
+        M<sub>t</sub>[n,e] = σ(⟨H<sub>t</sub>[n], Q<sub>static</sub>[e]⟩ / √d)<br>
+        H'<sub>t</sub> = HGConv(H<sub>t</sub>, M<sub>t</sub>) ×2<br>
+        Z = PMA(mean<sub>t</sub>(H'<sub>t</sub>))
+      </div>
+    </div>
+    <div>
+      <h3>Dyn-Hyper vs Static-Hyper</h3>
+      <ul>
+        <li>Q<sub>t</sub>가 동적이어야 할 필요가 있는가? 라는 질문에 답하는 ablation</li>
+        <li>채널-프로토타입 <b>매칭 점수</b>는 H<sub>t</sub>를 통해 어쨌든 시간에 따라 변함</li>
+        <li>Prototype 자체가 시간에 따라 변하는 vs 채널 임베딩 변화로 충분한지</li>
+      </ul>
+      <h3>결과 미리보기</h3>
+      <ul>
+        <li>Static이 더 좋음 → <b>prototype은 시간 무관 안정적 패턴</b>으로 두는 것이 inductive bias상 유리</li>
+        <li>Params <b>147K</b> · ~3&nbsp;분</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 8. no-PLV -->
+<section class="slide">
+  <h1><span class="pill pill-noplv">no-PLV</span> (light_attn_band_gated)</h1>
+  <p>PLV 모델의 ablation. 신경과학 prior를 <b>학습 가능한 5개 attention head</b>로 치환.</p>
+  <div class="twocol">
+    <div>
+      <h3>구조</h3>
+      <div class="formula">
+        H̄ = mean<sub>t</sub>(BiMamba(x))<br>
+        <span style="color:var(--orange)">// 5 learned heads (PLV 자리)</span><br>
+        for k ∈ {1..5}:<br>
+        &nbsp;&nbsp;Q<sup>k</sup>,K<sup>k</sup>,V<sup>k</sup> = Linear<sup>k</sup>(H̄)<br>
+        &nbsp;&nbsp;Â<sup>k</sup> = softmax(Q<sup>k</sup>K<sup>k⊤</sup>/√d)<br>
+        &nbsp;&nbsp;Z<sup>k</sup> = Â<sup>k</sup> · V<sup>k</sup><br>
+        g = softmax(MLP(state<sub>Mamba</sub>))<br>
+        Z = Σ<sub>k</sub> g<sup>k</sup> · Z<sup>k</sup>
+      </div>
+    </div>
+    <div>
+      <h3>PLV vs no-PLV</h3>
+      <ul>
+        <li>같은 5-branch + state-gated fusion 구조</li>
+        <li>차이는 <b>branch가 무엇으로 정의되느냐</b></li>
+        <li>PLV → 주파수 대역의 phase 동기화 (fixed)</li>
+        <li>no-PLV → 5개 학습되는 attention pattern</li>
+      </ul>
+      <h3>의의</h3>
+      <ul>
+        <li>"PLV prior가 도움 되는가?"의 직접적 답</li>
+        <li>Params <b>225K</b> (학습 헤드가 5개라 더 큼)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Performance table -->
+<section class="slide">
+  <h1>Test 성능 비교 (CHB-MIT)</h1>
+  <p>5-fold patient-wise split의 holdout test set. <b>~40k 샘플, &lt;2% positive</b>.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>모델</th>
+        <th class="num">Params</th>
+        <th class="num">Wallclock<br><span style="font-weight:400;font-size:0.85em">(50 ep + 4 eval)</span></th>
+        <th class="num">Test AUROC</th>
+        <th class="num">Test F1</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="pill pill-evo">EvoBrain</span></td><td class="num">184K</td><td class="num">~53 분</td><td class="num">0.829</td><td class="num"><b>0.172</b></td></tr>
+      <tr><td><span class="pill pill-attn">Light-Attn</span></td><td class="num">88K</td><td class="num">~2 분</td><td class="num">0.752</td><td class="num">0.117</td></tr>
+      <tr><td><span class="pill pill-plv">PLV</span></td><td class="num">184K</td><td class="num">~2 분</td><td class="num">0.808</td><td class="num">0.133</td></tr>
+      <tr><td><span class="pill pill-dyn">Dyn-Hyper</span></td><td class="num">295K</td><td class="num">~3 분</td><td class="num">0.820</td><td class="num">0.138</td></tr>
+      <tr class="best"><td><span class="pill pill-stat">Static-Hyper</span></td><td class="num">147K</td><td class="num">~3 분</td><td class="num"><b>0.833</b></td><td class="num">0.137</td></tr>
+      <tr class="best"><td><span class="pill pill-noplv">no-PLV</span></td><td class="num">225K</td><td class="num">~3 분</td><td class="num"><b>0.831</b></td><td class="num">0.114</td></tr>
+    </tbody>
+  </table>
+  <h2>핵심 발견</h2>
+  <ul>
+    <li><b>Static-Hyper</b>와 <b>no-PLV</b>가 EvoBrain을 AUROC로 능가 (≥0.829)</li>
+    <li>EvoBrain의 F1 우위(0.172)는 imbalanced 데이터 + 다른 threshold tuning 영향</li>
+    <li><b>PLV prior가 학습된 attention보다 떨어짐</b> — 흥미로운 negative result</li>
+  </ul>
+</section>
+
+<!-- 10. AUROC bar chart -->
+<section class="slide">
+  <h1>AUROC 비교 (시각화)</h1>
+  <div style="margin-top:1em;">
+    <div class="bar-row"><div class="bar-label">EvoBrain</div>
+      <div class="bar-track"><div class="bar-fill" style="width:82.9%;background:var(--gray);"></div></div>
+      <div class="bar-num">0.829</div></div>
+    <div class="bar-row"><div class="bar-label">Light-Attn</div>
+      <div class="bar-track"><div class="bar-fill" style="width:75.2%;background:var(--lgray);"></div></div>
+      <div class="bar-num">0.752</div></div>
+    <div class="bar-row"><div class="bar-label">PLV</div>
+      <div class="bar-track"><div class="bar-fill" style="width:80.8%;background:var(--accent);"></div></div>
+      <div class="bar-num">0.808</div></div>
+    <div class="bar-row"><div class="bar-label">Dyn-Hyper</div>
+      <div class="bar-track"><div class="bar-fill" style="width:82.0%;background:var(--green);"></div></div>
+      <div class="bar-num">0.820</div></div>
+    <div class="bar-row"><div class="bar-label">Static-Hyper</div>
+      <div class="bar-track"><div class="bar-fill" style="width:83.3%;background:var(--purple);"></div></div>
+      <div class="bar-num"><b>0.833</b></div></div>
+    <div class="bar-row"><div class="bar-label">no-PLV</div>
+      <div class="bar-track"><div class="bar-fill" style="width:83.1%;background:var(--orange);"></div></div>
+      <div class="bar-num"><b>0.831</b></div></div>
+  </div>
+  <p style="margin-top:1.5em;color:var(--muted);font-size:0.95em;">
+    Static-Hyper와 no-PLV가 EvoBrain의 0.829 라인을 넘김.
+  </p>
+</section>
+
+<!-- 11. Time -->
+<section class="slide">
+  <h1>학습 시간 비교</h1>
+  <p>50 epoch + 4 evaluation, 같은 GCP g4-standard-48 (NVIDIA L4) 환경.</p>
+  <div style="margin-top:1em;">
+    <div class="bar-row"><div class="bar-label">EvoBrain</div>
+      <div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--gray);"></div></div>
+      <div class="bar-num">~53 분</div></div>
+    <div class="bar-row"><div class="bar-label">Light-Attn</div>
+      <div class="bar-track"><div class="bar-fill" style="width:3.8%;background:var(--lgray);"></div></div>
+      <div class="bar-num">~2 분</div></div>
+    <div class="bar-row"><div class="bar-label">PLV</div>
+      <div class="bar-track"><div class="bar-fill" style="width:3.8%;background:var(--accent);"></div></div>
+      <div class="bar-num">~2 분</div></div>
+    <div class="bar-row"><div class="bar-label">Dyn-Hyper</div>
+      <div class="bar-track"><div class="bar-fill" style="width:5.7%;background:var(--green);"></div></div>
+      <div class="bar-num">~3 분</div></div>
+    <div class="bar-row"><div class="bar-label">Static-Hyper</div>
+      <div class="bar-track"><div class="bar-fill" style="width:5.7%;background:var(--purple);"></div></div>
+      <div class="bar-num">~3 분</div></div>
+    <div class="bar-row"><div class="bar-label">no-PLV</div>
+      <div class="bar-track"><div class="bar-fill" style="width:5.7%;background:var(--orange);"></div></div>
+      <div class="bar-num">~3 분</div></div>
+  </div>
+
+  <h2>왜 EvoBrain은 그렇게 느린가?</h2>
+  <ul>
+    <li>Dataloader가 <b>매 timestep(T=12)마다 N×N Pearson correlation</b> 계산</li>
+    <li>Profile: dataloader 47&nbsp;ms/sample (correlation이 88%)</li>
+    <li>새 모델들은 <code>graph_type=none</code> → dataloader 0.71&nbsp;ms/sample (<b>67×</b>)</li>
+  </ul>
+</section>
+
+<!-- 12. Loss curves -->
+<section class="slide">
+  <h1>Training Loss Curves</h1>
+  <p>50 epoch, BCE loss, balanced sampler.</p>
+  <div style="text-align:center; margin-top:1em;">
+    <img src="loss_curves.png" alt="loss curves" style="max-width:80%; max-height:60vh; border:1px solid var(--border); border-radius:4px;">
+  </div>
+  <p style="margin-top:1em;color:var(--muted);font-size:0.95em;">
+    Baselines (EvoBrain, Light-Attn)는 점선. 새 모델들은 실선.
+  </p>
+</section>
+
+<!-- 13. Takeaways -->
+<section class="slide">
+  <h1>정리</h1>
+  <h2>1. Lightweight TTG가 EvoBrain을 따라잡는다</h2>
+  <ul>
+    <li>같은 Bi-Mamba 백본에 그래프 블록만 단순화 → AUROC ≥ baseline, <b>20× 빠름</b></li>
+    <li>병목은 모델이 아니라 <b>per-timestep correlation 그래프 빌드</b>였음</li>
+  </ul>
+  <h2>2. Hyperedge는 dynamic할 필요가 없다</h2>
+  <ul>
+    <li>Static-Hyper > Dyn-Hyper → prototype은 <b>안정적 패턴</b>으로 두는 게 좋음</li>
+    <li>채널 임베딩 H<sub>t</sub>의 변화만으로 시간 의존성은 충분</li>
+  </ul>
+  <h2>3. PLV prior는 도움이 안 됐다</h2>
+  <ul>
+    <li>no-PLV (학습된 attention) ≈ PLV (band-PLV prior)</li>
+    <li>주파수 대역 prior가 충분히 강한 신호가 아닐 수 있음 — clip-level PLV의 한계?</li>
+    <li>후속: <b>time-windowed PLV (3s)</b>로 다시 검증해볼 가치</li>
+  </ul>
+</section>
+
+</div>
+
+<div class="nav">← → / Space</div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  let i = 0;
+  function show(n) {
+    slides[i].classList.remove('active');
+    i = (n + slides.length) % slides.length;
+    slides[i].classList.add('active');
+    history.replaceState(null, '', '#' + (i+1));
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); show(i+1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(i-1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length-1);
+  });
+  // restore from hash
+  const h = parseInt(location.hash.slice(1));
+  if (!isNaN(h) && h >= 1 && h <= slides.length) {
+    slides[0].classList.remove('active');
+    i = h-1;
+    slides[i].classList.add('active');
+  }
+</script>
+</body>
+</html>

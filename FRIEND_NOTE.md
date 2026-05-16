@@ -47,7 +47,6 @@ LSH = LightSTHyper (BiMamba + node_emb + 2-layer hypergraph). `†` = ep17-58 mi
 | Dataset | Window | Model | dev_AU | test_AU | F1 |
 |---|---|---|---|---|---|
 | TUSZ | 12s | Paper EvoBrain | — | 0.877 ±0.005 | 0.539 ±0.009 |
-| | | Our EvoBrain repro | 0.876 | **0.894** | 0.526 |
 | | | **Ours (LSH+E=3+bce)** | 0.871 | **0.884** | **0.522** |
 | | | Ours (LSH+E=3+none) | 0.870 | 0.875 | 0.501 |
 | | | Ours (LSH+E=4+bce) | 0.873 | 0.888 | 0.494 |

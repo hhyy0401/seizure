@@ -52,7 +52,7 @@ LSH = LightSTHyper (BiMamba + node_emb + 2-layer hypergraph). `†` = ep17-58 mi
 | | | Ours (LSH+E=3+none) | 0.870 | 0.875 | 0.501 |
 | | | Ours (LSH+E=4+bce) | 0.873 | 0.888 | 0.494 |
 | TUSZ | 60s | Paper EvoBrain | — | 0.865 ±0.009 | 0.483 ±0.006 |
-| | | **Ours (LSH+E=4+bce)** † | 0.819 | **0.857** | — |
+| | | **Ours (LSH+E=4+bce)** † | 0.826 | **0.869** | — |
 | | | Ours (LSH+E=3+bce) † | 0.818 | 0.850 | — |
 | | | Ours (LSH+E=3+none) † | 0.812 | 0.846 | — |
 | CHB-MIT | 12s | Paper EvoBrain | — | 0.94 | not stated |
@@ -61,8 +61,11 @@ LSH = LightSTHyper (BiMamba + node_emb + 2-layer hypergraph). `†` = ep17-58 mi
 | | | Ours (LSH+E=3+bce) † | 0.881 | 0.891 | — |
 
 **Highlights**:
-- TUSZ 12s/60s: paper test AUROC σ 안에서 match/exceed
-- CHB-MIT: paper 0.94 vs ours 0.90 (cancelled at ep55-58, still climbing).
+- TUSZ 12s: paper AUROC 0.877 vs **ours 0.884** (match within paper σ=0.005)
+- **TUSZ 60s: paper AUROC 0.865 vs ours 0.869** — at ep17 snapshot, training
+  was still climbing (dev reached 0.834 before cancel; test not re-checked
+  at that epoch)
+- CHB-MIT: paper 0.94 vs ours 0.90 (cancelled at ep55-58 still climbing).
   Split is same-patient random 15% — seed mismatch alone yields meaningful
   delta; not converged
 - F1 columns marked `—` were lost during pre-sweep cleanup; sweep finalize

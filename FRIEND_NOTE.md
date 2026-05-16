@@ -1,125 +1,93 @@
-# Status update — EvoBrain reproduction + our LightSTHyper
+# LightSTHyper — final results & how to reproduce
 
-## Confirmed main model
+## Results — 3-seed mean ± std vs paper EvoBrain
 
-**LightSTHyper** (`evobrain/model/light_dyn_hyper.py`):
-
-```
-input (B, T=12, N=19, D=100 FFT) 
-  → BiMamba backbone (2 layers, bidirectional)
-  → + learnable node embedding (N × d_model)
-  → 2× SpatioTemporalHyperedgeBlock
-  → time mean pool
-  → PMA readout (1 seed)
-  → BCE classifier
-```
-
-Auxiliary head: **per-edge BCE deep supervision** on the last hypergraph
-layer (aux_weight=0.3).
-
-Differentiator vs paper EvoBrain:
-- **Bi-directional Mamba** wrapper (paper is unidirectional)
-- **Learnable hyperedge** with PMA readout (paper uses dynamic graph
-  adjacency via xcorr + top-k)
-- **No xcorr / on-the-fly graph compute** → 10–20× faster training/eval
-
-Ablation switches preserved via `args`:
-- `--model_name {light_st_hyper, light_st_hyper_linear, light_st_hyper_dwsep}`
-  (mamba / linear / depthwise-sep conv)
-- `--aux_type {none, bce, entropy}`, `--aux_weight`
-- `--n_hyperedges`, `--n_hyper_layers`, `--use_node_emb`
-- `--bidirectional / --no_bidirectional`
-- `--rnn_units` (d_model)
-
-## Paper baselines (from EvoBrain Table 1, NeurIPS 2025 Spotlight)
-
-| Dataset | Window | AUROC | F1 |
-|---|---|---|---|
-| TUSZ | 12s detection | 0.877 ±0.005 | 0.539 ±0.009 |
-| TUSZ | 60s detection | 0.865 ±0.009 | 0.483 ±0.006 |
-| CHB-MIT | 12s detection | 0.94 (text only) | not stated |
-
-## Performance comparison (current best, before sweep)
-
-Paper-standard reporting: dev-AUROC-best ckpt → test AUROC + F1@τ\* (τ\* = F1-best τ tuned on dev).
-LSH = LightSTHyper (BiMamba + node_emb + 2-layer hypergraph). `†` = ep17-58 mid-training snapshot, NOT converged.
-
-| Dataset | Window | Model | dev_AU | test_AU | F1 |
+| Dataset | Window | Paper AUROC | **Ours AUROC** | Paper F1 | **Ours F1** |
 |---|---|---|---|---|---|
-| TUSZ | 12s | Paper EvoBrain | — | 0.877 ±0.005 | 0.539 ±0.009 |
-| | | **Ours (LSH+E=3+bce)** | 0.871 | **0.884** | **0.522** |
-| | | Ours (LSH+E=3+none) | 0.870 | 0.875 | 0.501 |
-| | | Ours (LSH+E=4+bce) | 0.873 | 0.888 | 0.494 |
-| TUSZ | 60s | Paper EvoBrain | — | 0.865 ±0.009 | 0.483 ±0.006 |
-| | | **Ours (LSH+E=4+bce)** † | 0.826 | **0.869** | — |
-| | | Ours (LSH+E=3+bce) † | 0.818 | 0.850 | — |
-| | | Ours (LSH+E=3+none) † | 0.812 | 0.846 | — |
-| CHB-MIT | 12s | Paper EvoBrain | — | 0.94 | not stated |
-| | | **Ours (LSH+E=4+bce)** † | 0.889 | **0.902** | — |
-| | | Ours (LSH+E=3+none) † | 0.876 | 0.892 | — |
-| | | Ours (LSH+E=3+bce) † | 0.881 | 0.891 | — |
+| TUSZ | 12s | 0.877 ±0.005 | **0.884 ±0.007** | 0.539 ±0.009 | 0.466 ±0.084 |
+| TUSZ | 60s | 0.865 ±0.009 | **0.878 ±0.009** | 0.483 ±0.006 | **0.531 ±0.050** |
+| CHB-MIT | 12s | 0.940 | 0.905 ±0.001 | — | 0.158 ±0.013 |
 
-**Highlights**:
-- TUSZ 12s: paper AUROC 0.877 vs **ours 0.884** (match within paper σ=0.005)
-- **TUSZ 60s: paper AUROC 0.865 vs ours 0.869** — at ep17 snapshot, training
-  was still climbing (dev reached 0.834 before cancel; test not re-checked
-  at that epoch)
-- CHB-MIT: paper 0.94 vs ours 0.90 (cancelled at ep55-58 still climbing).
-  Split is same-patient random 15% — seed mismatch alone yields meaningful
-  delta; not converged
-- F1 columns marked `—` were lost during pre-sweep cleanup; sweep finalize
-  will produce them paper-standard
+Reporting protocol: test AUROC at dev-AUROC-best ckpt; F1@τ\* with
+τ\* = F1-best τ on dev. Seeds {123, 456, 789}. **Bold** beats paper σ band.
 
-## Currently running: TUSZ 12s parameter sweep (45 jobs, overnight)
+- AUROC: 2 / 3 beat paper, CHB-MIT 0.035 below.
+- F1: TUSZ 60s beats; TUSZ 12s has high seed variance (see note); CHB-MIT
+  F1 calibration breaks under within-patient split (AUROC is the meaningful
+  number there).
 
-Anchor config: mamba + bce + use_node_emb=True, patience=10, num_epochs=80.
+## Final config (`E=3, d=128, lr=1e-3`, single setting across all 3 datasets)
 
-**Stage A** (36 jobs) — architecture × optimization grid:
-- n_hyperedges ∈ {2, 3, 4, 5}
-- rnn_units (d_model) ∈ {64, 96, 128}
-- lr ∈ {3e-4, 5e-4, 1e-3}
+| Param | Value | CLI flag |
+|---|---|---|
+| Backbone | BiMamba, 2 layers | `--model_name light_st_hyper --bidirectional` |
+| d_model | 128 | `--rnn_units 128` |
+| Hyperedges (E_h) | 3 | `--n_hyperedges 3` |
+| Hyperedge layers | 2 | `--n_hyper_layers 2` |
+| Node embedding | on | `--use_node_emb` |
+| Aux head | per-edge BCE, w=0.3 | `--aux_type bce --aux_weight 0.3` |
+| Dropout | 0.0 | `--dropout 0.0` |
+| Weight decay | 5e-4 | `--l2_wd 5e-4` |
+| LR | 1e-3 (Adam) | `--lr_init 1e-3` |
+| Input | FFT magnitudes, learned graph | `--use_fft --graph_type none` |
+| Early-stop | dev AUROC, patience 10 (TUSZ) / 15 (CHB) | `--metric_name auroc` |
+| Epoch cap | 80 (12s) / 100 (60s, CHB) | `--num_epochs 80` |
+| Train BS | 128 (12s, CHB) / 32 (60s) | `--train_batch_size 128` |
 
-**Stage B** (9 jobs) — regularization sweep at anchor (E=3, d=64, lr=3e-4):
-- dropout × weight_decay = 3 × 3
+Architecture + pseudocode: [`docs/MODEL.md`](docs/MODEL.md). Cluster /
+batch-size details: [`docs/PHOENIX_SETUP.md`](docs/PHOENIX_SETUP.md).
 
-Patience-on-AUROC early-stop + 2h walltime + auto-finalize fallback.
-Results dumped to `dev_results.npz` / `test_results.npz` for paper-standard
-F1@τ\* reporting.
+## How we picked it (search procedure)
 
-## CHB-MIT note (skipped for now)
+1. **Coarse grid** on TUSZ 12s (`sbatch/sweep_main.sbatch`, 36 jobs):
+   E_h ∈ {2,3,4,5} × d_model ∈ {64,96,128} × lr ∈ {3e-4, 5e-4, 1e-3}.
+2. **Regularization** at the best anchor (`sbatch/sweep_reg.sbatch`,
+   9 jobs): dropout × l2_wd grid → confirmed dropout=0, wd=5e-4 best.
+3. **Multi-seed validation** of top-3 distinct cfgs on all 3 datasets
+   (`sbatch/multiseed_*.sbatch`, 27 jobs, seeds {123, 456, 789}) →
+   E=3 d=128 lr=1e-3 is top-1 or near-top-1 on each dataset, so adopt
+   as final unified config.
 
-We ran 3 jobs (top TUSZ configs) — ours hit dev AUROC 0.897 climbing toward
-plateau around ep73-80. Paper claims 0.94 AUROC. We didn't reach it BUT:
+## TUSZ 12s F1 variance note
 
-- **Split is random within-patient** (paper protocol: "randomly selected
-  15% of the patient's data"). Train and test share all 22 patients —
-  same-session leakage possible. Strict patient-LOO would give different
-  numbers.
-- Our seed (123) ≠ paper seed (unknown) → exact numbers differ even with
-  identical protocol.
-- Re-running with same protocol but same-architecture EvoBrain reproduction
-  is the right comparison. Paper's published EvoBrain config on CHB-MIT
-  trains slowly (~30 min/epoch — large eval set + dynamic graph compute).
+At fixed cfg, F1 across seeds: 0.396 / 0.442 / 0.559 (mean 0.466, σ 0.084).
+AUROC moves only 0.007 — the model's ranking is robust. F1 swings come
+from argmax-τ\* on a plateau-flat dev PR curve; small τ shifts amplify
+into ≥0.1 F1 swings on the ~5%-pos test set. Paper's F1 σ=0.009 likely
+uses a smoother threshold-selection convention. Fix candidates (no
+retraining needed, re-aggregates from existing npz): median-over-plateau,
+smoothed argmax, or bootstrap-stabilized τ\*.
 
-## EvoBrain reproduction speed note
+## Checkpoints
 
-The paper's "17× faster than DCRNN" claim refers to **forward pass compute**
-(BiMamba beats DCRNN's gated recurrence). It does NOT mean EvoBrain itself is
-fast end-to-end:
-- `graph_type=dynamic` recomputes 19×19 cross-correlation adjacency per batch
-- Dev/test eval is full set (no subsample) — 40K clips on CHB-MIT, 100K+ on
-  TUSZ
-- Combined: 1 epoch ≈ 35 min for CHB-MIT EvoBrain reproduction
+Best-dev-AUROC checkpoints (seed=123, the cfg above) are committed:
 
-Our LightSTHyper avoids both — `graph_type=none`, hyperedges learned end-to-end.
-1 epoch ≈ 1.5 min on TUSZ 12s.
+```
+ckpts/tusz12/{best.pth.tar, args.json}     # TUSZ 12s, dev AU 0.875, test AU 0.891
+ckpts/tusz60/{best.pth.tar, args.json}     # TUSZ 60s, dev AU 0.866, test AU 0.871
+ckpts/chb12/{best.pth.tar, args.json}      # CHB-MIT 12s, test AU 0.904
+```
 
-## Repo
+`args.json` has absolute paths to our scratch — update `raw_data_dir /
+input_dir / preproc_dir` if reproducing on a different filesystem.
 
-GitHub: `hhyy0401/seizure`, branch `main`, latest commit `eaff304`.
-Main: `evobrain/main.py`, model: `evobrain/model/light_dyn_hyper.py`,
-sweep sbatch: `sbatch/sweep_main.sbatch`, `sbatch/sweep_reg.sbatch`.
+## Reproducing
 
-EvoBrain reproduction code (paper's model) is in `evobrain/model/EvoBrain.py`
-+ supporting files (`cell.py`, `DCRNN.py`, etc.). All Paper Table 1
-baselines included for direct comparison.
+**Eval from shipped ckpts** (fastest, ~5–15 min each on rtx6000):
+
+```bash
+sbatch --exclude=atl1-1-03-007-1-0 sbatch/eval_ckpts.sbatch
+# array 0-2 → dumps {dev,test}_results.npz alongside each ckpt
+python src/scripts/aggregate_multiseed.py
+```
+
+**Full retrain** (27 runs, ~6h wall total):
+
+```bash
+J1=$(sbatch --parsable --exclude=atl1-1-03-007-1-0 sbatch/multiseed_tusz12.sbatch)
+J2=$(sbatch --parsable --exclude=atl1-1-03-007-1-0 sbatch/multiseed_tusz60.sbatch)
+J3=$(sbatch --parsable --exclude=atl1-1-03-007-1-0 sbatch/multiseed_chb12.sbatch)
+sbatch --dependency=afterany:$J1:$J2:$J3 sbatch/aggregate_multiseed.sbatch
+```
+
+GitHub: `hhyy0401/seizure`, branch `main`.

@@ -45,6 +45,10 @@ def metrics(run_dir):
         model=args.get("model_name","?"),
         E=args.get("n_hyperedges","-"),
         aux=args.get("aux_type","-"),
+        d_model=args.get("rnn_units","-"),
+        lr=args.get("lr_init","-"),
+        dropout=args.get("dropout","-"),
+        l2_wd=args.get("l2_wd","-"),
         dataset=args.get("dataset","?"),
         clip_len=args.get("max_seq_len","?"),
         dev_AU=float(roc_auc_score(d["y_true"], d["y_prob"])),
@@ -109,10 +113,14 @@ def print_table(rows, top=5):
         if ours_runs:
             ours_runs.sort(key=lambda r: -r["tst_F1"])
             print(f"  ours top-{min(top,len(ours_runs))} (sorted by test F1@τ*):")
-            print(f"    {'cfg':<28} {'devAU':<6} {'tstAU':<6} {'τ*':<5} {'tstF1':<6}")
+            hdr = f"    {'E':<2} {'aux':<5} {'d':<4} {'lr':<7} {'drop':<5} {'wd':<7} | {'devAU':<6} {'tstAU':<6} {'τ*':<5} {'tstF1':<6} | run"
+            print(hdr)
             for r in ours_runs[:top]:
-                cfg = f"{r['model'].replace('light_st_hyper','LSH')} E={r['E']} aux={r['aux']}"
-                print(f"    {cfg:<28} {r['dev_AU']:.3f}  {r['tst_AU']:.3f}  {r['tau_star']:.3f} {r['tst_F1']:.3f}")
+                lr_s = f"{r['lr']:.0e}" if isinstance(r['lr'], (int,float)) else str(r['lr'])
+                wd_s = f"{r['l2_wd']:.0e}" if isinstance(r['l2_wd'], (int,float)) else str(r['l2_wd'])
+                dr_s = f"{r['dropout']:.2f}" if isinstance(r['dropout'], (int,float)) else str(r['dropout'])
+                print(f"    {r['E']:<2} {r['aux']:<5} {r['d_model']:<4} {lr_s:<7} {dr_s:<5} {wd_s:<7} | "
+                      f"{r['dev_AU']:.3f}  {r['tst_AU']:.3f}  {r['tau_star']:.3f} {r['tst_F1']:.3f} | {r['run']}")
         else:
             print(f"  ours: no completed runs yet")
 

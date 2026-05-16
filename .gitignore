@@ -23,6 +23,8 @@ pipeline_backup_*.tar.gz
 *.tar.gz
 *.tar
 *.zip
+# Exception: ship the 3 final paper ckpts (6 MB each)
+!ckpts/**/*.pth.tar
 
 # ============================================================
 # Caches & build artifacts

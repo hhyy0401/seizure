@@ -11,7 +11,7 @@ Input: raw EEG → resample 200 Hz → STFT (1 s windows) → FFT magnitudes
   X ∈ R^(B × T × N × D)                  T=12, N=19, D=100 for TUSZ 12s
 
   ▼
-Per-channel BiMamba (forward + reverse, two-layer, d_model)
+Per-channel Mamba (uni-directional, two-layer, d_model)
   H_seq ∈ R^(B × T × N × d_model)
 
   ▼ + learnable node embedding (N × d_model)
@@ -34,7 +34,7 @@ PMA readout (Set Transformer): seed vector queries node tokens
 
 Linear → sigmoid → BCE loss (binary seizure detection)
 
-Optional: aux head on the last hyperedge block
+Optional aux head on the last hyperedge block (final config = OFF):
   - "bce":     per-edge classifier supervises h_edge with the same target
   - "entropy": minimize membership entropy on M̂ (encourage hard assignments)
 ```
@@ -43,11 +43,11 @@ Optional: aux head on the last hyperedge block
 
 | Aspect | Paper EvoBrain | Ours LightSTHyper |
 |---|---|---|
-| Temporal backbone | Mamba (uni-directional, causal) | **Bi-Mamba** (forward + reverse, mean) |
+| Temporal backbone | Mamba (uni-directional, causal) | Mamba (uni-directional) |
 | Spatial structure | Dynamic xcorr graph + top-k edges | **Learnable hypergraph** (no xcorr at runtime) |
 | Spatial module | DCRNN-style diffusion conv | SpatioTemporalHyperedgeBlock (set-style) |
 | Readout | Per-node MLP + max pool | **PMA readout** (Set Transformer) |
-| Deep supervision | none | Optional **per-edge BCE** (aux head) |
+| Deep supervision | none | none in final cfg (BCE/entropy aux available as flag) |
 | Eval-time graph cost | O(N²) xcorr per batch | O(N · E_h) projection |
 | 1 epoch on TUSZ 12s | ~5–10 min | ~1.5 min |
 
@@ -178,16 +178,16 @@ class LightSTHyper(nn.Module):
 # Backbone choice (default = mamba):
 --model_name {light_st_hyper, light_st_hyper_linear, light_st_hyper_dwsep}
 
-# Bi-Mamba toggle (default = bidirectional):
+# Bi-Mamba toggle (final config = --no_bidirectional, uni-Mamba):
 --bidirectional / --no_bidirectional
 
-# Hyperedge config:
---n_hyperedges 3        # E_h
+# Hyperedge config (final config = E_h ∈ {1,2,3} swept, node_emb on):
+--n_hyperedges 1        # E_h
 --n_hyper_layers 2
 --n_pma_seeds 1
 --use_node_emb
 
-# Aux head:
+# Aux head (final config = none):
 --aux_type {none, bce, entropy}
 --aux_weight 0.3
 

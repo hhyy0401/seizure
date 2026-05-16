@@ -2,130 +2,136 @@
 
 EEG seizure detection on TUSZ and CHB-MIT. Built on top of
 [Kotoge/EvoBrain](https://github.com/Kotoge/EvoBrain) (NeurIPS 2025 Spotlight,
-MIT license — `src/LICENSE`), with our main model **LightSTHyper** that
-replaces the paper's dynamic-adjacency graph with a learnable spatio-temporal
-hyperedge module and a bi-directional Mamba backbone.
-
-## Main model — LightSTHyper
+MIT license — `src/LICENSE`), with our main model **LightSTHyper**:
+a learnable spatio-temporal hyperedge module on top of a uni-directional
+Mamba backbone.
 
 ```
 EEG (B, T, N, FFT)
-  → BiMamba (forward + reverse, 2-layer, per channel)
+  → uni-Mamba (2-layer, per channel)
   → + learnable node embedding
-  → 2× SpatioTemporalHyperedgeBlock  (E_h soft hyperedges, swept)
+  → 2× SpatioTemporalHyperedgeBlock  (E_h soft hyperedges)
   → mean over time
   → PMA readout (Set Transformer seed query)
   → BCE classifier
 ```
 
-Aux head: per-edge BCE deep supervision on the last hyperedge block
-(`--aux_type bce --aux_weight 0.3`).
+Architecture + pseudocode: [docs/MODEL.md](docs/MODEL.md). Cluster
+details: [docs/PHOENIX_SETUP.md](docs/PHOENIX_SETUP.md).
 
-Full architecture + pseudocode: [docs/MODEL.md](docs/MODEL.md).
+## Final config
 
-## What's different from paper EvoBrain
+Single hyperparameter setting (other than E_h) across all three benchmarks.
 
-| Aspect | Paper EvoBrain | Ours |
+| Param | Value | CLI flag |
 |---|---|---|
-| Temporal | Mamba (uni-directional) | **Bi-Mamba** |
-| Spatial | Dynamic xcorr graph + top-k | **Learnable hypergraph** |
-| Readout | DCRNN diffusion + max pool | PMA (Set Transformer) |
-| Deep supervision | none | Optional per-edge BCE |
-| 1 epoch on TUSZ 12s | ~5–10 min | **~1.5 min** |
+| Backbone | uni-Mamba, 2 layers (per channel) | `--model_name light_st_hyper --no_bidirectional` |
+| d_model | 128 | `--rnn_units 128` |
+| Hyperedges (E_h) | {1, 2, 3} swept | `--n_hyperedges {1,2,3}` |
+| Hyperedge layers | 2 | `--n_hyper_layers 2` |
+| Node embedding | on | `--use_node_emb` |
+| Aux head | off | `--aux_type none` |
+| Dropout | 0.0 | `--dropout 0.0` |
+| Weight decay | 5e-4 | `--l2_wd 5e-4` |
+| LR | 1e-3 (Adam) | `--lr_init 1e-3` |
+| Input | FFT magnitudes, no fixed adjacency | `--use_fft --graph_type none` |
+| Early-stop | dev AUROC, patience 10 (TUSZ) / 15 (CHB-MIT) | `--metric_name auroc` |
+| Epoch cap | 80 (TUSZ 12s) / 100 (TUSZ 60s, CHB-MIT) | `--num_epochs ...` |
+| Train batch | 128 (12s, CHB-MIT) / 32 (60s) | `--train_batch_size ...` |
 
-Paper EvoBrain reproduction is included (`src/model/EvoBrain.py`) for
-direct comparison.
+Reporting protocol: test AUROC at dev-AUROC-best ckpt; F1@τ\* with
+τ\* = F1-best τ on dev. Seeds {123, 456, 789}.
+
+Numbers from the 27-run sweep are written to
+[`FINAL_RESULTS.md`](FINAL_RESULTS.md) by the aggregator
+(`sbatch/report/build_final_table.sbatch`).
 
 ## Repo layout
 
 ```
 disease/
-├── src/                            # All code (renamed from evobrain/)
-│   ├── main.py                     # Training entry point
-│   ├── args.py                     # CLI (ablation switches preserved)
+├── src/                            # All code
+│   ├── main.py                     # Training entry
+│   ├── args.py                     # CLI
 │   ├── model/
 │   │   ├── light_dyn_hyper.py      # ★ LightSTHyper (main)
-│   │   ├── mamba_backbone.py       # BiMamba backbone
-│   │   ├── temporal_backbones.py   # dwsep backbone (ablation)
+│   │   ├── mamba_backbone.py       # Mamba backbone
 │   │   ├── EvoBrain.py             # paper baseline
-│   │   ├── DCRNN.py, gru_gcn.py, EGCN.py, …
-│   │   └── BIOT.py, lstm.py, cnnlstm.py, graphs4mer.py
-│   ├── data/                       # Loaders, preproc, file_markers
-│   │   ├── dataloader_detection.py # TUSZ
-│   │   ├── dataloader_chb.py       # CHB-MIT
-│   │   └── build_file_markers_*.py
+│   │   └── (other baselines: DCRNN, EGCN, BIOT, GraphS4mer, …)
+│   ├── data/                       # Loaders + preproc + file_markers
 │   └── scripts/
-│       ├── aggregate_grid.py       # paper-standard F1@τ* aggregation
+│       ├── build_final_table.py    # aggregate sweep → FINAL_RESULTS.md
+│       ├── refresh_ckpts.py        # copy best run ckpts into ckpts/
 │       ├── finalize_runs.py        # rebuild test_results.npz from ckpt
-│       └── build_results_table.py  # cross-dataset comparison table
-├── sbatch/                         # SLURM scripts for Phoenix
-│   ├── sweep_main.sbatch           # 36-job grid (E × d × lr)
-│   ├── sweep_reg.sbatch            # 9-job reg sweep (dropout × wd)
-│   ├── train_light_st_hyper.sbatch
-│   ├── train_evobrain.sbatch       # paper reproduction
-│   └── …
+│       ├── dump_membership.py      # dump hyperedge M from ckpt
+│       ├── viz_channel_focus.py    # channel topomaps
+│       └── viz_node_emb.py         # t-SNE + cosine of node embeddings
+├── sbatch/                         # SLURM scripts (see sbatch/README.md)
+│   ├── setup/    env, data download, preproc
+│   ├── train/    evobrain baseline + final_{tusz12,tusz60,chb12}
+│   ├── report/   build_final_table, refresh_ckpts
+│   └── figures/  dump_membership, viz_channel_focus, viz_node_emb
+├── ckpts/                          # 3 final checkpoints (E_h=1, seed=123)
+│   ├── tusz12/{best.pth.tar, args.json}
+│   ├── tusz60/{best.pth.tar, args.json}
+│   └── chb12/{best.pth.tar,  args.json}
 ├── docs/
-│   ├── MODEL.md                    # architecture + pseudocode
-│   └── PHOENIX_SETUP.md            # cluster config, batch sizes, paths
-├── README.md
-├── FRIEND_NOTE.md                  # status + paper-vs-ours table
-├── evobrain.pdf                    # paper
-└── external_baselines/             # third-party (gitignored)
+│   ├── MODEL.md
+│   └── PHOENIX_SETUP.md
+├── figures/                        # Interpretability outputs
+├── README.md  ·  FINAL_RESULTS.md  (auto-generated)
+└── evobrain.pdf                    # paper
 ```
 
-## Quick start
+`args.json` records absolute scratch paths — update
+`raw_data_dir / input_dir / preproc_dir` when reproducing elsewhere.
+
+## Reproducing
 
 ```bash
-# 1. Activate env (Phoenix or compatible)
+# 0. Env
 conda activate /storage/scratch1/3/hkim3239/.conda/envs/evobrain
 
-# 2. Train main model (TUSZ 12s)
+# 1. Final sweep (27 runs: 3 datasets × E_h ∈ {1,2,3} × 3 seeds)
+J1=$(sbatch --parsable sbatch/train/final_tusz12.sbatch)
+J2=$(sbatch --parsable sbatch/train/final_tusz60.sbatch)
+J3=$(sbatch --parsable sbatch/train/final_chb12.sbatch)
+sbatch --dependency=afterany:$J1:$J2:$J3 sbatch/report/build_final_table.sbatch
+# → FINAL_RESULTS.md
+
+# 2. Paper EvoBrain baseline (CHB-MIT)
+sbatch sbatch/train/evobrain.sbatch
+
+# 3. Interpretability figures (uses ckpts/tusz12/)
+sbatch sbatch/figures/dump_membership.sbatch     # → figures/membership_tusz12.npz
+sbatch sbatch/figures/viz_channel_focus.sbatch   # → figures/channel/*.png
+sbatch sbatch/figures/viz_node_emb.sbatch        # → figures/node_emb/*.png
+```
+
+Single-run override (TUSZ 12s, E_h=1, seed=123):
+
+```bash
 cd src/
-python main.py \
-    --dataset TUSZ --task detection \
-    --model_name light_st_hyper \
-    --aux_type bce --aux_weight 0.3 \
-    --n_hyperedges 3 --use_node_emb --bidirectional \
-    --rnn_units 64 --dropout 0.0 --l2_wd 5e-4 \
-    --lr_init 3e-4 --num_epochs 80 --patience 10 \
-    --train_batch_size 128 --test_batch_size 256 \
-    --eval_every 1 --metric_name auroc \
+python main.py --dataset TUSZ --task detection --model_name light_st_hyper \
+    --num_nodes 19 --max_seq_len 12 --time_step_size 1 \
+    --graph_type none --use_fft --use_node_emb --no_bidirectional \
+    --rnn_units 128 --n_hyper_layers 2 --n_hyperedges 1 \
+    --aux_type none --dropout 0.0 --l2_wd 5e-4 \
+    --num_epochs 80 --train_batch_size 128 --test_batch_size 256 \
+    --lr_init 1e-3 --patience 10 --eval_every 1 --metric_name auroc \
+    --rand_seed 123 --data_augment \
     --raw_data_dir /path/to/tusz/edf \
     --input_dir /path/to/tusz_resampled \
     --preproc_dir /path/to/tusz_preproc/clipLen12_timeStepSize1 \
-    --save_dir /path/to/out/run1 --data_augment
-
-# 3. Or via SLURM
-sbatch sbatch/train_light_st_hyper.sbatch
+    --save_dir /path/to/out/run1
 ```
-
-## Paper-standard reporting
-
-Always report:
-1. Test AUROC at the **dev-AUROC-best checkpoint**
-2. F1 at **τ\* = F1-best τ tuned on dev**, applied to test
-
-Aggregate after training:
-```bash
-python src/scripts/build_results_table.py
-```
-
-`main.py` automatically dumps `dev_results.npz` / `test_results.npz` from
-the best ckpt on natural termination (early stop or end of epochs).
-`scripts/finalize_runs.py` is the fallback for runs killed by walltime.
 
 ## Datasets
 
-- **TUSZ v2.0.6** detection (official patient-level split): 12s + 60s clips
-- **CHB-MIT** detection (paper protocol — same-patient random 15% test
-  split; see [docs/MODEL.md](docs/MODEL.md))
+- **TUSZ v2.0.6** detection (official patient-level split): 12 s and 60 s clips
+- **CHB-MIT** detection (paper protocol — same-patient random 15 % test split)
 
 Train uses balanced 1:1 sz:nosz subsampling. Dev/test use full sets.
-
-## Setup
-
-See [docs/PHOENIX_SETUP.md](docs/PHOENIX_SETUP.md) for cluster details,
-batch-size guidance, and the Blackwell variant.
 
 ## License
 

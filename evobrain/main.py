@@ -129,108 +129,30 @@ def main(args):
 
     # Build model
     log.info('Building model...')
-    if args.model_name == "dcrnn":
+    if args.model_name == "evobrain":
+        if args.agg != "max":
+            log.info("Using EvoBrain with aggregation method: {}".format(args.agg))
+        model = EvoBrain_classification(args=args, num_classes=args.num_classes, device=device)
+    elif args.model_name in ("light_st_hyper", "light_st_hyper_linear",
+                              "light_st_hyper_dwsep"):
+        # dwsep uses Conv1d which hits a cublasLt symbol issue on this
+        # torch/CUDA combo when dispatched through cuDNN. Disable for dwsep.
+        if args.model_name == "light_st_hyper_dwsep":
+            torch.backends.cudnn.enabled = False
+        from model.light_dyn_hyper import LightSTHyper_classification
+        backbone = {
+            "light_st_hyper": "mamba",      # BiMamba (main)
+            "light_st_hyper_linear": "linear",
+            "light_st_hyper_dwsep": "dwsep",
+        }[args.model_name]
+        model = LightSTHyper_classification(
+            args=args, num_classes=args.num_classes, device=device,
+            backbone_type=backbone)
+    elif args.model_name == "dcrnn":
         model = DCRNNModel_classification(
             args=args, num_classes=args.num_classes, device=device)
     elif args.model_name == "evolvegcn":
         model = EvolveGCN_Model_classification(args=args, num_classes=args.num_classes, device=device)
-    elif args.model_name == "evobrain":
-        if args.agg != "max":
-            log.info("Using EvoBrain with aggregation method: {}".format(args.agg))
-        model = EvoBrain_classification(args=args, num_classes=args.num_classes, device=device)
-    elif args.model_name in ("light_dot", "light_bilinear", "light_attention"):
-        from model.LightEvoBrain import LightEvoBrain_classification
-        edge_type = args.model_name.split("_", 1)[1]  # "dot" | "bilinear" | "attention"
-        model = LightEvoBrain_classification(
-            args=args, num_classes=args.num_classes, device=device, edge_type=edge_type)
-    elif args.model_name in ("light_dyn_hyper", "light_static_hyper"):
-        from model.light_dyn_hyper import LightDynHyper_classification
-        static = (args.model_name == "light_static_hyper")
-        model = LightDynHyper_classification(
-            args=args, num_classes=args.num_classes, device=device,
-            static_queries=static)
-    elif args.model_name in ("light_st_hyper", "light_st_hyper_linear",
-                              "light_ncde_st_hyper", "light_gncde_st_hyper",
-                              "light_st_hyper_norm", "light_st_hyper_xattn",
-                              "light_st_hyper_kmeans",
-                              "light_st_hyper_dwsep", "light_st_hyper_timesnet"):
-        # Conv1d/Conv2d in dwsep/timesnet dispatches through cuDNN and hits
-        # the same cublasLt symbol issue as the ada_mshyper/st_hyper path.
-        if args.model_name in ("light_st_hyper_dwsep", "light_st_hyper_timesnet"):
-            torch.backends.cudnn.enabled = False
-        from model.light_dyn_hyper import LightSTHyper_classification
-        backbone = {
-            "light_st_hyper": "mamba",
-            "light_st_hyper_linear": "linear",
-            "light_ncde_st_hyper": "ncde",
-            "light_gncde_st_hyper": "gncde",
-            "light_st_hyper_norm": "mamba",
-            "light_st_hyper_xattn": "mamba",
-            "light_st_hyper_kmeans": "mamba",
-            "light_st_hyper_dwsep": "dwsep",
-            "light_st_hyper_timesnet": "timesnet",
-        }[args.model_name]
-        hyper_block_type = {
-            "light_st_hyper_xattn": "adaptive",
-            "light_st_hyper_kmeans": "iterative",
-        }.get(args.model_name, "static")
-        use_input_norm = (args.model_name == "light_st_hyper_norm")
-        model = LightSTHyper_classification(
-            args=args, num_classes=args.num_classes, device=device,
-            backbone_type=backbone,
-            hyper_block_type=hyper_block_type,
-            use_input_norm=use_input_norm)
-    elif args.model_name == "light_st_hyper_mscale":
-        from model.light_dyn_hyper import LightSTHyperMScale_classification
-        model = LightSTHyperMScale_classification(
-            args=args, num_classes=args.num_classes, device=device)
-    elif args.model_name == "ada_mshyper":
-        # torch 2.9.1 + cuDNN 9.10 + CUDA 12.9 has a cublasLt symbol issue
-        # when Conv1d dispatches through cuDNN. Disable cuDNN for the
-        # baselines (Conv1d is small, perf impact negligible).
-        torch.backends.cudnn.enabled = False
-        # THIN wrapper around the byte-faithful official Ada-MSHyper
-        # Model in model/baselines_official/ada_mshyper/ASHyper.py.
-        # See that file for the algorithm.
-        from model.ada_mshyper_eeg import AdaMSHyperEEG_classification
-        model = AdaMSHyperEEG_classification(
-            num_nodes=args.num_nodes, input_dim=args.input_dim,
-            max_seq_len=args.max_seq_len, num_classes=args.num_classes)
-    elif args.model_name == "st_hyper":
-        torch.backends.cudnn.enabled = False
-        # NOTE: ST-Hyper (CIKM 2025) code is NOT public. This wrapper
-        # implements "official Ada-MSHyper Model with joint (N*T) input
-        # axis" per ST-Hyper §3 — captures the core "joint spatial-
-        # temporal nodes" claim only. STPM / memory / GCRU / edge-edge
-        # GAT from the paper are NOT reproduced (no source to verify).
-        from model.st_hyper_eeg import STHyperEEG_classification
-        model = STHyperEEG_classification(
-            num_nodes=args.num_nodes, input_dim=args.input_dim,
-            max_seq_len=args.max_seq_len, num_classes=args.num_classes)
-    elif args.model_name == "mshyper":
-        torch.backends.cudnn.enabled = False
-        # THIN wrapper around official MSHyper Model in
-        # model/baselines_official/mshyper/MSHyper.py.
-        from model.mshyper_eeg import MSHyperEEG_classification
-        model = MSHyperEEG_classification(
-            num_nodes=args.num_nodes, input_dim=args.input_dim,
-            max_seq_len=args.max_seq_len, num_classes=args.num_classes)
-    elif args.model_name in ("light_st_hyper_band", "light_st_hyper_band_mamba"):
-        from model.light_st_hyper_band import LightSTHyperBand_classification
-        backbone = "mamba" if args.model_name == "light_st_hyper_band_mamba" else "linear"
-        model = LightSTHyperBand_classification(
-            args=args, num_classes=args.num_classes, device=device,
-            backbone_type=backbone, gate_mode="learned")
-    elif args.model_name == "light_mamba_band_plv":
-        from model.light_mamba_band_plv import LightMambaBandPLV_classification
-        model = LightMambaBandPLV_classification(
-            args=args, num_classes=args.num_classes, device=device,
-            gate_mode=getattr(args, "gate_mode", "mamba"))
-    elif args.model_name == "light_attn_band_gated":
-        from model.light_attn_band_gated import LightAttnBandGated_classification
-        model = LightAttnBandGated_classification(
-            args=args, num_classes=args.num_classes, device=device,
-            gate_mode=getattr(args, "gate_mode", "mamba"))
     elif args.model_name == "graphs4mer":
         model = GraphS4mer(num_classes=args.num_classes, max_seq_len=args.max_seq_len, num_nodes=args.num_nodes)
     elif args.model_name == "gru_gcn":
@@ -369,6 +291,15 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
     epoch = 0
     step = 0
     prev_val_loss = 1e10
+    # Track best dev metric (e.g. AUROC) for early-stopping. Decoupled from
+    # prev_val_loss because dev loss can keep shrinking via confidence
+    # sharpening long after dev AUROC has plateaued — this masks overfit and
+    # prevents patience from triggering. We reset patience only when the
+    # ckpt-selection metric actually improves.
+    if args.maximize_metric:
+        best_dev_metric = -1e10
+    else:
+        best_dev_metric = 1e10
     patience_count = 0
     early_stop = False
     memory_usage_list = []
@@ -405,21 +336,16 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                 start_time = time.time()
                 initial_memory = torch.cuda.memory_allocated(device) if torch.cuda.is_available() else 0
 
-                if args.model_name in ("evobrain", "light_dot", "light_bilinear", "light_attention",
-                                       "light_dyn_hyper", "light_static_hyper", "light_st_hyper", "light_st_hyper_linear", "light_ncde_st_hyper", "light_gncde_st_hyper", "light_st_hyper_mscale", "light_st_hyper_band", "light_st_hyper_band_mamba", "light_st_hyper_norm", "light_st_hyper_xattn", "light_st_hyper_kmeans", "light_st_hyper_dwsep", "light_st_hyper_timesnet",
-                                       "light_attn_band_gated",
+                if args.model_name in ("evobrain", "light_st_hyper",
+                                       "light_st_hyper_linear", "light_st_hyper_dwsep",
                                        "evolvegcn", "gru_gcn"):
                     logits, _ = model(x, seq_lengths, adj)
-                elif args.model_name == "light_mamba_band_plv":
-                    logits, _ = model(x, seq_lengths, adj, raw_signal=raw_signal)
                 elif args.model_name == "dcrnn":
                     logits, _ = model(x, seq_lengths, supports)
                 elif args.model_name == "BIOT":
                     logits, _ = model(x)
                 elif args.model_name == "lstm" or args.model_name == "cnnlstm" or args.model_name == "graphs4mer":
                     logits, _ = model(x, seq_lengths)
-                elif args.model_name in ("ada_mshyper", "st_hyper", "mshyper"):
-                    logits = model(x)
                 else:
                     print("model_name: ", args.model_name)
                     raise NotImplementedError
@@ -427,15 +353,11 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                     logits = logits.view(-1)
                 loss = loss_fn(logits, y)
 
-                # Ada-MSHyper dual loss: official exp_main.py adds the AHL
-                # constraint loss (loss2) via a separate backward pass + 2nd
-                # optimizer. Mathematically equivalent to summing the losses
-                # before one backward, which is what we do here.
-                # MSHyper uses a FIXED hypergraph and does NOT add this term.
-                if args.model_name == "ada_mshyper":
-                    aux = model.hypergraph_aux_loss()
-                    if aux is not None and aux.requires_grad:
-                        loss = loss + aux
+                # Hypergraph aux regularizer (bce|entropy) on light_st_hyper_*.
+                if getattr(args, "aux_type", "none") != "none" and hasattr(model, "compute_aux_loss"):
+                    aux2 = model.compute_aux_loss(y)
+                    if aux2.requires_grad:
+                        loss = loss + args.aux_weight * aux2
                 loss_val = loss.item()
 
                 # Backward
@@ -491,9 +413,17 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                                             is_test=True,
                                             nll_meter=None)
 
-                # Accumulate patience for early stopping
-                if eval_results['loss'] < prev_val_loss:
+                # Accumulate patience on the same metric used for ckpt
+                # selection (args.metric_name). dev_loss can decrease forever
+                # via confidence sharpening even after AUROC plateaus.
+                cur_metric = eval_results[args.metric_name]
+                if args.maximize_metric:
+                    improved = cur_metric > best_dev_metric
+                else:
+                    improved = cur_metric < best_dev_metric
+                if improved:
                     patience_count = 0
+                    best_dev_metric = cur_metric
                 else:
                     patience_count += 1
                 prev_val_loss = eval_results['loss']
@@ -575,25 +505,16 @@ def evaluate(
             start_time = time.time()
             # Forward
             # (batch_size, num_classes)
-            if args.model_name in ("evobrain", "light_dot", "light_bilinear", "light_attention",
-                                   "light_dyn_hyper", "light_static_hyper", "light_st_hyper", "light_st_hyper_linear", "light_ncde_st_hyper", "light_gncde_st_hyper", "light_st_hyper_mscale", "light_st_hyper_band", "light_st_hyper_band_mamba", "light_st_hyper_norm", "light_st_hyper_xattn", "light_st_hyper_kmeans", "light_st_hyper_dwsep", "light_st_hyper_timesnet",
-                                   "light_attn_band_gated"):
-                logits, hidden = model(x, seq_lengths, adj)
-            elif args.model_name == "light_mamba_band_plv":
-                logits, hidden = model(x, seq_lengths, adj, raw_signal=raw_signal)
-            elif args.model_name == "gru_gcn":
+            if args.model_name in ("evobrain", "light_st_hyper",
+                                   "light_st_hyper_linear", "light_st_hyper_dwsep",
+                                   "evolvegcn", "gru_gcn"):
                 logits, hidden = model(x, seq_lengths, adj)
             elif args.model_name == "dcrnn":
                 logits, hidden = model(x, seq_lengths, supports)
-            elif args.model_name == "evolvegcn":
-                logits, hidden = model(x, seq_lengths, adj)
             elif args.model_name == "BIOT":
                 logits, hidden = model(x)
             elif args.model_name == "lstm" or args.model_name == "cnnlstm" or args.model_name == "graphs4mer":
                 logits, hidden = model(x, seq_lengths)
-            elif args.model_name in ("ada_mshyper", "st_hyper", "mshyper"):
-                logits = model(x)
-                hidden = logits  # placeholder so hidden_all append below works
             else:
                 raise NotImplementedError
 

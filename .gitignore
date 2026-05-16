@@ -80,3 +80,9 @@ external_baselines/
 # ============================================================
 !evobrain/data/file_markers_*/**/*.txt
 !evobrain/data/file_markers_*/**/*.pkl
+
+
+# Legacy tarballs (heavy, regenerate with cleanup if needed)
+*.tar.gz
+legacy.tar.gz
+legacy_round2.tar.gz

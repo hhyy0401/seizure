@@ -100,33 +100,34 @@ def get_args():
     #   internal `pred_len` becomes an embedding dim rather than a forecast
     #   horizon. See model/ada_mshyper_eeg.py and model/st_hyper_eeg.py
     #   docstrings + BASELINES.md for the exact delta.
-    parser.add_argument("--model_name", type=str, default="evobrain", choices=(
-        "evobrain",
-        "light_dot", "light_bilinear", "light_attention",
-        "light_dyn_hyper", "light_static_hyper", "light_st_hyper", "light_st_hyper_linear", "light_ncde_st_hyper", "light_gncde_st_hyper", "light_st_hyper_mscale", "light_st_hyper_band", "light_st_hyper_band_mamba", "light_mamba_band_plv",
-        "light_st_hyper_norm", "light_st_hyper_xattn", "light_st_hyper_kmeans",
-        "light_st_hyper_dwsep", "light_st_hyper_timesnet",
-        "light_attn_band_gated",
-        "ada_mshyper", "st_hyper", "mshyper",   # forecasting→classification adapted (FF head only)
-        "lstm", "cnnlstm", "dcrnn", "evolvegcn", "BIOT", "gru_gcn", "graphs4mer",
+    parser.add_argument("--model_name", type=str, default="light_st_hyper", choices=(
+        # Main model + ablation backbones (all share LightSTHyper architecture):
+        "light_st_hyper",          # BiMamba backbone (main)
+        "light_st_hyper_linear",   # linear backbone (no temporal modeling — ablation)
+        "light_st_hyper_dwsep",    # depthwise-separable 1D conv backbone (ablation)
+        # Paper Table 1 baselines:
+        "evobrain", "dcrnn", "evolvegcn", "gru_gcn", "graphs4mer", "BIOT", "lstm", "cnnlstm",
     ))
     parser.add_argument('--n_hyperedges', type=int, default=8,
                         help='Number of hyperedges for light_dyn_hyper/light_static_hyper.')
     parser.add_argument('--use_node_emb', action='store_true', default=False,
                         help='Add a learnable per-node embedding after the temporal backbone (light_st_hyper_* only).')
-    parser.add_argument('--timesnet_k', type=int, default=2,
-                        help='Top-k FFT periods for the TimesNet backbone (light_st_hyper_timesnet).')
+    parser.add_argument('--aux_type', type=str, default='none',
+                        choices=('none', 'bce', 'entropy'),
+                        help='Auxiliary regularizer on the last hypergraph layer '
+                             '(light_st_hyper_* only). '
+                             '"bce": per-edge BCE deep supervision; '
+                             '"entropy": per-(t,n) membership entropy.')
+    parser.add_argument('--aux_weight', type=float, default=0.3,
+                        help='Weight applied to the auxiliary loss when --aux_type != none.')
     parser.add_argument('--n_hyper_layers', type=int, default=2,
                         help='Number of hypergraph layers.')
     parser.add_argument('--n_pma_seeds', type=int, default=1,
                         help='Number of PMA seed queries (Set Transformer readout).')
-    parser.add_argument('--gate_mode', type=str, default='mamba',
-                        choices=('mamba', 'static', 'uniform'),
-                        help='Band gate for light_mamba_band_plv.')
     parser.add_argument('--bidirectional', action='store_true', default=True,
-                        help='Bi-directional Mamba in the per-channel backbone.')
+                        help='Bi-directional Mamba in the per-channel backbone (default).')
     parser.add_argument('--no_bidirectional', dest='bidirectional', action='store_false',
-                        help='Force uni-directional Mamba (ablation).')
+                        help='Force uni-directional Mamba (paper-strict ablation).')
     parser.add_argument('--fs', type=float, default=200.0,
                         help='Sampling rate of resampled signal (200 Hz default).')
     parser.add_argument('--num_nodes',

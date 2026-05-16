@@ -266,6 +266,11 @@ class SpatioTemporalHyperedgeBlock(nn.Module):
         # Spatio-temporal hyperedge embedding: pool over (N, T).
         w_sum_st = M.sum(dim=(1, 2)).clamp_min(1e-6).unsqueeze(-1)     # (B, E_h, 1)
         h_edge_st = torch.einsum("btne,btnd->bed", M, H_seq) / w_sum_st  # (B, E_h, d)
+        # Stash for optional aux heads:
+        #   `last_h_edge`: (B, E_h, d) → per-edge BCE deep supervision
+        #   `last_M`:      (B, T, N, E_h) → soft-assignment entropy reg
+        self.last_h_edge = h_edge_st
+        self.last_M = M
 
         # Broadcast time-collapsed hyperedge back to every (t, n).
         H_upd = torch.einsum("btne,bed->btnd", M, h_edge_st)           # (B, T, N, d)
@@ -564,14 +569,18 @@ class LightSTHyper(nn.Module):
         n_iters: int = 2,
         use_node_emb: bool = False,
         timesnet_k: int = 2,
+        aux_type: str = "none",
     ):
         super().__init__()
         self.n_nodes = n_nodes
         self.d_model = d_model
         self.backbone_type = backbone_type
+        assert aux_type in ("none", "bce", "entropy")
+        self.aux_type = aux_type
 
         self.input_norm = InputInstanceNorm() if use_input_norm else nn.Identity()
 
+        # Backbone ablation: mamba (main) / linear / dwsep
         if backbone_type == "mamba":
             self.backbone = BiMambaBackbone(
                 d_input=d_input, d_model=d_model,
@@ -579,24 +588,13 @@ class LightSTHyper(nn.Module):
             )
         elif backbone_type == "linear":
             self.backbone = LinearBackbone(d_input=d_input, d_model=d_model)
-        elif backbone_type == "ncde":
-            from model.ncde_backbone import NCDEBackbone
-            self.backbone = NCDEBackbone(d_input=d_input, d_model=d_model)
-        elif backbone_type == "gncde":
-            from model.ncde_backbone import GraphNCDEBackbone
-            self.backbone = GraphNCDEBackbone(
-                d_input=d_input, d_model=d_model, n_nodes=n_nodes)
         elif backbone_type == "dwsep":
             from model.temporal_backbones import DepthwiseSeparable1DBackbone
             self.backbone = DepthwiseSeparable1DBackbone(
                 d_input=d_input, d_model=d_model, n_layers=n_mamba_layers)
-        elif backbone_type == "timesnet":
-            from model.temporal_backbones import TimesNetBackbone
-            self.backbone = TimesNetBackbone(
-                d_input=d_input, d_model=d_model,
-                n_layers=n_mamba_layers, k=timesnet_k)
         else:
-            raise ValueError(f"Unknown backbone_type: {backbone_type}")
+            raise ValueError(f"Unknown backbone_type: {backbone_type} "
+                             f"(supported: mamba, linear, dwsep)")
 
         self.use_node_emb = use_node_emb
         if use_node_emb:
@@ -622,6 +620,46 @@ class LightSTHyper(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(d_hidden * n_pma_seeds, n_classes)
+
+        # Per-edge classifier used only for aux_type == "bce".
+        self.aux_classifier = (
+            nn.Linear(d_hidden, n_classes) if aux_type == "bce" else None
+        )
+
+    def compute_aux_loss(self, y: torch.Tensor) -> torch.Tensor:
+        """Auxiliary regularizer on the LAST hypergraph layer.
+            aux_type == "bce":     per-edge BCE deep-supervision (uses h_edge)
+            aux_type == "entropy": minimize per-(t,n) entropy over edge
+                                   memberships, encouraging hard assignment
+                                   (uses M)
+            aux_type == "none":    0-scalar (no-op)
+        """
+        if self.aux_type == "none":
+            return y.new_zeros(())
+        last = self.hyper_layers[-1]
+        if self.aux_type == "bce":
+            if self.aux_classifier is None or not hasattr(last, "last_h_edge"):
+                return y.new_zeros(())
+            h_edge = last.last_h_edge                   # (B, E_h, d)
+            edge_logits = self.aux_classifier(h_edge)   # (B, E_h, n_classes)
+            if edge_logits.shape[-1] == 1:
+                edge_logits = edge_logits.squeeze(-1)
+                y_b = y.float().unsqueeze(-1).expand_as(edge_logits)
+                return F.binary_cross_entropy_with_logits(edge_logits, y_b)
+            B, E_h, C = edge_logits.shape
+            return F.cross_entropy(
+                edge_logits.reshape(B * E_h, C),
+                y.long().unsqueeze(-1).expand(B, E_h).reshape(B * E_h),
+            )
+        if self.aux_type == "entropy":
+            if not hasattr(last, "last_M"):
+                return y.new_zeros(())
+            M = last.last_M                             # (B, T, N, E_h)
+            # Normalize over edge axis → soft assignment per (t, n).
+            p = M / M.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+            ent = -(p * p.clamp_min(1e-12).log()).sum(dim=-1)   # (B, T, N)
+            return ent.mean()
+        return y.new_zeros(())
 
     def pma_readout(self, H_pool: torch.Tensor) -> torch.Tensor:
         # H_pool: (B, N, d) → (B, n_seeds * d)
@@ -677,9 +715,13 @@ class LightSTHyper_classification(nn.Module):
             n_iters=getattr(args, "n_iters", 2),
             use_node_emb=getattr(args, "use_node_emb", False),
             timesnet_k=getattr(args, "timesnet_k", 2),
+            aux_type=getattr(args, "aux_type", "none"),
         )
 
     def forward(self, input_seq, seq_lengths, adj_unused=None):
         x = input_seq.permute(0, 2, 1, 3).contiguous()
         logits, hidden = self.model(x)
         return logits, hidden
+
+    def compute_aux_loss(self, y):
+        return self.model.compute_aux_loss(y)

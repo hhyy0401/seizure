@@ -26,7 +26,7 @@ EVAL_EVERY="${EVAL_EVERY:-5}"
 # -------------------------------------------------------------------
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain     # ← project (code on project, data on scratch)
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src     # ← project (code on project, data on scratch)
 RAW=/storage/scratch1/3/hkim3239/data/chb_mit
 H5=/storage/scratch1/3/hkim3239/data/chb_mit_resampled
 SAVE_BASE=/storage/scratch1/3/hkim3239/eeg/runs/chb

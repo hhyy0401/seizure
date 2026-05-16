@@ -25,7 +25,7 @@ TAG="${TAG:-run1}"
 # ----------------------------------------------------------------------
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 RAW=/storage/scratch1/3/hkim3239/data/chb_mit
 H5=/storage/scratch1/3/hkim3239/data/chb_mit_resampled
 SAVE_BASE=/storage/scratch1/3/hkim3239/runs/chb

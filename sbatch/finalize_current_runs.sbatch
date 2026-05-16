@@ -46,7 +46,7 @@ RUN_DIR="${RUNS[$IDX]}"
 echo "ArrayIdx=$IDX  RUN_DIR=$RUN_DIR"
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate "$ENV_PATH"
 cd "$REPO"

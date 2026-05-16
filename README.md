@@ -1,157 +1,132 @@
-# EvoBrain / light_st_hyper — EEG Seizure Detection
+# Seizure Detection — LightSTHyper
 
-Spatio-temporal hyperedge models for seizure detection on CHB-MIT and TUSZ.
+EEG seizure detection on TUSZ and CHB-MIT. Built on top of
+[Kotoge/EvoBrain](https://github.com/Kotoge/EvoBrain) (NeurIPS 2025 Spotlight,
+MIT license — `src/LICENSE`), with our main model **LightSTHyper** that
+replaces the paper's dynamic-adjacency graph with a learnable spatio-temporal
+hyperedge module and a bi-directional Mamba backbone.
 
-Built on top of [Kotoge/EvoBrain](https://github.com/Kotoge/EvoBrain) (MIT license — `evobrain/LICENSE`),
-extended with new model variants (`light_st_hyper`, `light_mamba_band_plv`,
-`ada_mshyper`, etc.) and Phoenix HPC training infrastructure.
+## Main model — LightSTHyper
 
----
+```
+EEG (B, T, N, FFT)
+  → BiMamba (forward + reverse, 2-layer, per channel)
+  → + learnable node embedding
+  → 2× SpatioTemporalHyperedgeBlock  (E_h soft hyperedges, swept)
+  → mean over time
+  → PMA readout (Set Transformer seed query)
+  → BCE classifier
+```
+
+Aux head: per-edge BCE deep supervision on the last hyperedge block
+(`--aux_type bce --aux_weight 0.3`).
+
+Full architecture + pseudocode: [docs/MODEL.md](docs/MODEL.md).
+
+## What's different from paper EvoBrain
+
+| Aspect | Paper EvoBrain | Ours |
+|---|---|---|
+| Temporal | Mamba (uni-directional) | **Bi-Mamba** |
+| Spatial | Dynamic xcorr graph + top-k | **Learnable hypergraph** |
+| Readout | DCRNN diffusion + max pool | PMA (Set Transformer) |
+| Deep supervision | none | Optional per-edge BCE |
+| 1 epoch on TUSZ 12s | ~5–10 min | **~1.5 min** |
+
+Paper EvoBrain reproduction is included (`src/model/EvoBrain.py`) for
+direct comparison.
 
 ## Repo layout
 
 ```
 disease/
-├── evobrain/                      # Core code (forked from Kotoge/EvoBrain, modified)
-│   ├── main.py                    # Training entry point
-│   ├── model/                     # All model variants (EvoBrain, LightEvoBrain, …)
-│   ├── data/                      # Dataloaders, preprocess scripts, file_markers
-│   ├── args.py, constants.py, utils.py
-│   └── ...
-├── sbatch/                        # SLURM scripts for Phoenix
+├── src/                            # All code (renamed from evobrain/)
+│   ├── main.py                     # Training entry point
+│   ├── args.py                     # CLI (ablation switches preserved)
+│   ├── model/
+│   │   ├── light_dyn_hyper.py      # ★ LightSTHyper (main)
+│   │   ├── mamba_backbone.py       # BiMamba backbone
+│   │   ├── temporal_backbones.py   # dwsep backbone (ablation)
+│   │   ├── EvoBrain.py             # paper baseline
+│   │   ├── DCRNN.py, gru_gcn.py, EGCN.py, …
+│   │   └── BIOT.py, lstm.py, cnnlstm.py, graphs4mer.py
+│   ├── data/                       # Loaders, preproc, file_markers
+│   │   ├── dataloader_detection.py # TUSZ
+│   │   ├── dataloader_chb.py       # CHB-MIT
+│   │   └── build_file_markers_*.py
+│   └── scripts/
+│       ├── aggregate_grid.py       # paper-standard F1@τ* aggregation
+│       ├── finalize_runs.py        # rebuild test_results.npz from ckpt
+│       └── build_results_table.py  # cross-dataset comparison table
+├── sbatch/                         # SLURM scripts for Phoenix
+│   ├── sweep_main.sbatch           # 36-job grid (E × d × lr)
+│   ├── sweep_reg.sbatch            # 9-job reg sweep (dropout × wd)
 │   ├── train_light_st_hyper.sbatch
-│   ├── train_evobrain.sbatch
-│   ├── train_chb.sbatch
-│   ├── preprocess_chb.sbatch
-│   ├── preprocess_tusz.sbatch
-│   ├── download_chb_mit.sbatch
-│   ├── rsync_tusz_nedc.sbatch
-│   └── setup_env_evobrain.sbatch  # one-shot env builder
-├── PHOENIX_SETUP_rtx6000.txt      # Setup notes for gpu-rtx6000
-├── PHOENIX_SETUP_rtxpro.txt       # Setup notes for gpu-rtxpro-blackwell
-├── light_evobrain_pseudocode.md   # Model design sketch
-├── figures/experiments_summary.md # Methodology summary
-└── evobrain.pdf                   # Project writeup
+│   ├── train_evobrain.sbatch       # paper reproduction
+│   └── …
+├── docs/
+│   ├── MODEL.md                    # architecture + pseudocode
+│   └── PHOENIX_SETUP.md            # cluster config, batch sizes, paths
+├── README.md
+├── FRIEND_NOTE.md                  # status + paper-vs-ours table
+├── evobrain.pdf                    # paper
+└── external_baselines/             # third-party (gitignored)
 ```
 
-Heavy artifacts (`runs/`, `graph_cache/`, `external_baselines/`, `backup/`) are
-gitignored — regenerate them by training/preprocessing.
-
----
-
-## Quick start (training the current model)
-
-The **current canonical model** is `light_st_hyper` (Light EvoBrain with
-spatio-temporal hyperedge block, ~80K params).
-
-### 1) Environment (one-time)
-
-Build the conda env (Phoenix `gts-nimam6-paid` account):
+## Quick start
 
 ```bash
-sbatch sbatch/setup_env_evobrain.sbatch
+# 1. Activate env (Phoenix or compatible)
+conda activate /storage/scratch1/3/hkim3239/.conda/envs/evobrain
+
+# 2. Train main model (TUSZ 12s)
+cd src/
+python main.py \
+    --dataset TUSZ --task detection \
+    --model_name light_st_hyper \
+    --aux_type bce --aux_weight 0.3 \
+    --n_hyperedges 3 --use_node_emb --bidirectional \
+    --rnn_units 64 --dropout 0.0 --l2_wd 5e-4 \
+    --lr_init 3e-4 --num_epochs 80 --patience 10 \
+    --train_batch_size 128 --test_batch_size 256 \
+    --eval_every 1 --metric_name auroc \
+    --raw_data_dir /path/to/tusz/edf \
+    --input_dir /path/to/tusz_resampled \
+    --preproc_dir /path/to/tusz_preproc/clipLen12_timeStepSize1 \
+    --save_dir /path/to/out/run1 --data_augment
+
+# 3. Or via SLURM
+sbatch sbatch/train_light_st_hyper.sbatch
 ```
 
-This creates `<scratch>/.conda/envs/evobrain` with:
-- python 3.11, torch 2.5.1+cu121
-- mamba-ssm 2.2.6.post3 + causal-conv1d 1.5.4
-- torch-geometric 2.3.1, pyg-scatter
-- numpy, scipy, h5py, pyedflib, tensorboardX, ...
+## Paper-standard reporting
 
-Existing env path expected: `/storage/scratch1/3/hkim3239/.conda/envs/evobrain`
-(edit `ENV_PATH=` in sbatch headers to match your setup).
+Always report:
+1. Test AUROC at the **dev-AUROC-best checkpoint**
+2. F1 at **τ\* = F1-best τ tuned on dev**, applied to test
 
-### 2) Data
-
-- **CHB-MIT**: `sbatch sbatch/download_chb_mit.sbatch` then `sbatch sbatch/preprocess_chb.sbatch`
-- **TUSZ v2.0.6** (requires NEDC SSH key `~/.ssh/id_ed25519_nedc`):
-  `sbatch sbatch/rsync_tusz_nedc.sbatch` then `sbatch sbatch/preprocess_tusz.sbatch`
-
-Output layout (scratch by convention):
-```
-<scratch>/data/chb_mit/              # CHB-MIT raw EDF
-<scratch>/data/chb_mit_resampled/    # 200 Hz h5
-<scratch>/eeg/tusz/v2.0.6/           # TUSZ raw EDF
-<scratch>/eeg/tusz_resampled/        # 200 Hz h5
-<scratch>/eeg/tusz_preproc/          # FFT 12s/60s clip h5
-```
-
-### 3) Train (current model)
-
+Aggregate after training:
 ```bash
-# CHB-MIT, light_st_hyper, 100 epochs
-sbatch -p gpu-l40s \
-    --export=ALL,MODEL_NAME=light_st_hyper,TAG=run1,SEED=123 \
-    sbatch/train_light_st_hyper.sbatch
+python src/scripts/build_results_table.py
 ```
 
-Available `MODEL_NAME` values:
-- `light_st_hyper` ← **current canonical**
-- `light_dot`, `light_bilinear`, `light_attention` (LightEvoBrain edge variants)
-- `light_dyn_hyper`, `light_static_hyper`
-- `light_mamba_band_plv`, `light_attn_band_gated`
-- `light_st_hyper_band`, `light_st_hyper_band_mamba`
-- `light_st_hyper_norm`, `light_st_hyper_mscale`
-- `ada_mshyper`, `st_hyper`, `mshyper`
-- `evobrain` (original full model — use `sbatch/train_evobrain.sbatch`)
-- `BIOT`, `dcrnn`, `evolvegcn`, `graphs4mer`, `gru_gcn`, `lstm`, `cnnlstm`
+`main.py` automatically dumps `dev_results.npz` / `test_results.npz` from
+the best ckpt on natural termination (early stop or end of epochs).
+`scripts/finalize_runs.py` is the fallback for runs killed by walltime.
 
-All overridable env vars:
-- `MODEL_NAME` (default: `light_st_hyper`)
-- `CLIP_LEN` (12 | 60, default 12)
-- `NUM_EPOCHS` (default 100)
-- `TRAIN_BS`, `TEST_BS` (default 128 / 256)
-- `LR` (default 1e-4)
-- `SEED` (default 123)
-- `TAG` (run name suffix, default = `$MODEL_NAME`)
-- `EVAL_EVERY` (default 5)
-- `NUM_WORKERS` (DataLoader workers, default 4)
+## Datasets
 
----
+- **TUSZ v2.0.6** detection (official patient-level split): 12s + 60s clips
+- **CHB-MIT** detection (paper protocol — same-patient random 15% test
+  split; see [docs/MODEL.md](docs/MODEL.md))
 
-## Recommended Phoenix partition
+Train uses balanced 1:1 sz:nosz subsampling. Dev/test use full sets.
 
-`gpu-l40s` (48 GB VRAM, Ada sm_89) is the best balance of speed vs queue depth
-vs cost for these models. cu121 env works on all partitions except
-`gpu-rtxpro-blackwell` (sm_120 requires cu128+).
+## Setup
 
-| Partition | VRAM | Compatible? |
-|---|---|---|
-| gpu-l40s | 48 GB | ✅ (recommended) |
-| gpu-a100 | 80 GB | ✅ |
-| gpu-h100 / gpu-h200 | 80 / 141 GB | ✅ |
-| gpu-v100 | 32 GB | ✅ (slower, queue often long) |
-| gpu-rtx6000 | 24 GB | ✅ (24 GB tight for full EvoBrain, queue often 200+) |
-| gpu-rtxpro-blackwell | 96 GB | ❌ needs cu128 env |
+See [docs/PHOENIX_SETUP.md](docs/PHOENIX_SETUP.md) for cluster details,
+batch-size guidance, and the Blackwell variant.
 
----
+## License
 
-## Path overrides
-
-The sbatch scripts contain hardcoded paths under `/storage/scratch1/3/hkim3239/`
-and `/storage/project/r-nimam6-0/hkim3239/`. To run on your own Phoenix
-account:
-
-1. Search-replace `hkim3239` and `r-nimam6-0` to match your account.
-2. Or override at submit time: edit `REPO=`, `ENV_PATH=`, `SAVE_BASE=` near the
-   top of each training sbatch.
-
-The expected dir layout (mirrored from this repo) for friend's account:
-```
-~/r-nimam6-0/disease/                    # this repo
-/storage/scratch1/<id>/.conda/envs/evobrain   # conda env (build once)
-/storage/scratch1/<id>/data/chb_mit*          # CHB-MIT data
-/storage/scratch1/<id>/eeg/tusz*              # TUSZ data
-/storage/scratch1/<id>/eeg/runs/              # training outputs (heavy)
-```
-
----
-
-## Attribution
-
-- `evobrain/` is forked from [Kotoge/EvoBrain](https://github.com/Kotoge/EvoBrain)
-  (MIT license, see `evobrain/LICENSE`). New models and pipeline are our
-  extension. Original git history backed up at `backup/.git_kotoge_evobrain_backup/`
-  (not tracked in this repo).
-- `external_baselines/Ada-MSHyper` and `MSHyper` are vendored from their
-  respective upstreams (gitignored — clone separately if needed).
+Code: MIT (inherited from EvoBrain).

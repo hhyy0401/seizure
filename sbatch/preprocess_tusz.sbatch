@@ -18,7 +18,7 @@ set -euo pipefail
 # Override TUSZ_VER for a different version (file_markers may need regen).
 
 TUSZ_VER=${TUSZ_VER:-v2.0.6}
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 RAW=/storage/scratch1/3/hkim3239/eeg/tusz/$TUSZ_VER
 RAW_EDF=$RAW/edf
 RESAMPLED=/storage/scratch1/3/hkim3239/eeg/tusz_resampled

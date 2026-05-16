@@ -42,7 +42,7 @@ D_MODEL=64
 TAG="sweep-reg"
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 RAW=/storage/scratch1/3/hkim3239/eeg/tusz/v2.0.6
 RESAMPLED=/storage/scratch1/3/hkim3239/eeg/tusz_resampled
 PREPROC_DIR=/storage/scratch1/3/hkim3239/eeg/tusz_preproc/clipLen12_timeStepSize1

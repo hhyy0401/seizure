@@ -14,7 +14,7 @@ set -euo pipefail
 
 RAW=/storage/scratch1/3/hkim3239/data/chb_mit
 H5=/storage/scratch1/3/hkim3239/data/chb_mit_resampled
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 PY=/storage/home/hcoda1/3/hkim3239/miniconda3/envs/fastenv/bin/python
 mkdir -p /storage/scratch1/3/hkim3239/logs
 

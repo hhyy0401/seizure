@@ -14,7 +14,7 @@
 set -euo pipefail
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 mkdir -p /storage/scratch1/3/hkim3239/logs
 
 echo "Host: $(hostname)"

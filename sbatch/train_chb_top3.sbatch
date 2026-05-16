@@ -39,7 +39,7 @@ AUX_WEIGHT="${AUX_WEIGHT:-0.3}"
 TAG="${TAG:-chb-top3}"
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 RAW=/storage/scratch1/3/hkim3239/data/chb_mit
 RESAMPLED=/storage/scratch1/3/hkim3239/data/chb_mit_resampled
 

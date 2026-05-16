@@ -40,7 +40,7 @@ AUX_WEIGHT="${AUX_WEIGHT:-0.3}"
 TAG="${TAG:-tusz60-top3}"
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
-REPO=/storage/project/r-nimam6-0/hkim3239/disease/evobrain
+REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
 RAW=/storage/scratch1/3/hkim3239/eeg/tusz/v2.0.6
 RESAMPLED=/storage/scratch1/3/hkim3239/eeg/tusz_resampled
 

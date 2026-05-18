@@ -105,6 +105,15 @@ def get_args():
         "light_st_hyper",          # BiMamba backbone (main)
         "light_st_hyper_linear",   # linear backbone (no temporal modeling — ablation)
         "light_st_hyper_dwsep",    # depthwise-separable 1D conv backbone (ablation)
+        "light_st_hyper_pair",     # pairwise spatial self-attn (no hyperedge — ablation)
+        # Dense (per-second) variants for point-wise detection:
+        "light_dense_hyper",       # per-t HyperedgeBlock, (B,T,1) seq2seq logits (ours dense)
+        "evobrain_dense",          # paper EvoBrain backbone + per-t readout (baseline dense)
+        "dcrnn_dense",             # paper DCRNN backbone + per-t FC + max-pool
+        "gru_gcn_dense",           # paper GRU-GCN backbone + per-t readout (GCN at last-t)
+        "lstm_dense",              # paper LSTM backbone + per-t FC
+        "cnnlstm_dense",           # paper CNN-LSTM backbone + per-t FC
+        "biot_dense",              # paper BIOT (Transformer) + per-t classifier
         # Paper Table 1 baselines:
         "evobrain", "dcrnn", "evolvegcn", "gru_gcn", "graphs4mer", "BIOT", "lstm", "cnnlstm",
     ))
@@ -120,6 +129,26 @@ def get_args():
                              '"entropy": per-(t,n) membership entropy.')
     parser.add_argument('--aux_weight', type=float, default=0.3,
                         help='Weight applied to the auxiliary loss when --aux_type != none.')
+    # Temporal smoothness regularizer for dense (point-wise) detection.
+    # Encourages adjacent-timestep logits to be similar — reflects the prior
+    # that seizure events are continuous in time, not flickering. Only active
+    # when --dense_labels is set and --smooth_weight > 0.
+    parser.add_argument('--smooth_weight', type=float, default=0.0,
+                        help='Weight for L2 smoothness loss on adjacent per-t logits. '
+                             'loss = BCE + smooth_weight * mean((logits[:, t+1] - logits[:, t])^2). '
+                             '0 disables.')
+    # Point-wise (per-second) detection flags
+    parser.add_argument('--dense_labels', action='store_true', default=False,
+                        help='Per-second labels: dataloader returns y of shape (T,), '
+                             'model emits (B, T, 1), trainer does BCE over (B, T). '
+                             'Required for --model_name light_dense_hyper / evobrain_dense.')
+    parser.add_argument('--eval_broadcast', action='store_true', default=False,
+                        help='At eval time, broadcast a clip-level (B,1) prediction to (B,T) '
+                             'so frame-level metrics can be computed. Use with binary baselines '
+                             'plus --dense_labels to get frame metrics without retraining.')
+    parser.add_argument('--save_hidden', action='store_true', default=False,
+                        help='Save final-test hidden states (hidden.csv, can be ~6GB on TUSZ). '
+                             'Off by default to keep disk usage small during sweeps.')
     parser.add_argument('--n_hyper_layers', type=int, default=2,
                         help='Number of hypergraph layers.')
     parser.add_argument('--n_pma_seeds', type=int, default=1,

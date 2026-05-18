@@ -362,8 +362,13 @@ def load_dataset_chb(
         sampling_ratio=1,
         seed=123,
         preproc_dir=None,
-        return_raw=False):
+        return_raw=False,
+        dense_labels=False):
     """Returns (dataloaders, datasets, scaler) matching the TUSZ interface."""
+    if dense_labels:
+        raise NotImplementedError(
+            "dense_labels=True is not wired up for CHB-MIT; only TUSZ supports "
+            "per-second seq2seq labels in this repo.")
     if task != "detection":
         raise NotImplementedError(
             f"CHB-MIT task '{task}' not implemented; only 'detection' is wired up.")

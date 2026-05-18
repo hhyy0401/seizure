@@ -83,7 +83,22 @@ def computeSliceMatrix(
             is_seizure = 1
             break
 
-    return eeg_clip, is_seizure
+    # Per-timestep seizure labels (same time grid the model sees).
+    # dense_label[k] = 1 if the k-th time_step_size window overlaps any seizure
+    # interval. Used for point-wise (per-second) detection.
+    n_steps = eeg_clip.shape[0]
+    dense_label = np.zeros(n_steps, dtype=np.float32)
+    for k in range(n_steps):
+        ws = start_window + k * physical_time_step_size
+        we = ws + physical_time_step_size
+        for t in seizure_times:
+            st = int(t[0] * FREQUENCY)
+            en = int(t[1] * FREQUENCY)
+            if not (we <= st or ws >= en):
+                dense_label[k] = 1.0
+                break
+
+    return eeg_clip, is_seizure, dense_label
 
 
 def parseTxtFiles(split_type, seizure_file, nonseizure_file,
@@ -146,7 +161,8 @@ class SeizureDataset(Dataset):
             sampling_ratio=1,
             seed=123,
             use_fft=False,
-            preproc_dir=None):
+            preproc_dir=None,
+            dense_labels=False):
         """
         Args:
             input_dir: dir to resampled signals h5 files
@@ -185,6 +201,7 @@ class SeizureDataset(Dataset):
         self.filter_type = filter_type
         self.use_fft = use_fft
         self.preproc_dir = preproc_dir
+        self.dense_labels = dense_labels
 
         # get full paths to all raw edf files
         self.edf_files = []
@@ -380,13 +397,33 @@ class SeizureDataset(Dataset):
         if self.preproc_dir is None:
             resample_sig_dir = os.path.join(
                 self.input_dir, h5_fn.split('.edf')[0] + '.h5')
-            eeg_clip, is_seizure = computeSliceMatrix(
+            eeg_clip, is_seizure, dense_label = computeSliceMatrix(
                 h5_fn=resample_sig_dir, edf_fn=edf_file, clip_idx=clip_idx,
                 time_step_size=self.time_step_size, clip_len=self.max_seq_len,
                 is_fft=self.use_fft)
         else:
             with h5py.File(os.path.join(self.preproc_dir, h5_fn), 'r') as hf:
                 eeg_clip = hf['clip'][()]
+            # Recompute dense_label from seizure annotations when EEG comes
+            # from preproc cache — annotations are cheap, cache holds signal only.
+            if self.dense_labels:
+                seizure_times = getSeizureTimes(edf_file.split('.edf')[0])
+                n_steps = eeg_clip.shape[0]
+                physical_clip_len = int(FREQUENCY * self.max_seq_len)
+                physical_time_step_size = int(FREQUENCY * self.time_step_size)
+                start_window = clip_idx * physical_clip_len
+                dense_label = np.zeros(n_steps, dtype=np.float32)
+                for k in range(n_steps):
+                    ws = start_window + k * physical_time_step_size
+                    we = ws + physical_time_step_size
+                    for t in seizure_times:
+                        st = int(t[0] * FREQUENCY)
+                        en = int(t[1] * FREQUENCY)
+                        if not (we <= st or ws >= en):
+                            dense_label[k] = 1.0
+                            break
+            else:
+                dense_label = None
 
         # data augmentation
         if self.data_augment:
@@ -402,7 +439,12 @@ class SeizureDataset(Dataset):
 
         # convert to tensors
         x = torch.FloatTensor(curr_feature)
-        y = torch.FloatTensor([seizure_label])
+        if self.dense_labels and dense_label is not None:
+            # (T,) per-second labels — model emits (B, T) logits, trainer does
+            # BCE over (B, T). When seizure_label == 0, dense_label is all-0.
+            y = torch.FloatTensor(dense_label)
+        else:
+            y = torch.FloatTensor([seizure_label])
         seq_len = torch.LongTensor([self.max_seq_len])
         writeout_fn = h5_fn.split('.h5')[0]
 
@@ -503,7 +545,8 @@ def load_dataset_detection(
         use_fft=False,
         sampling_ratio=1,
         seed=123,
-        preproc_dir=None):
+        preproc_dir=None,
+        dense_labels=False):
     """
     Args:
         input_dir: dir to preprocessed h5 file
@@ -576,7 +619,8 @@ def load_dataset_detection(
                                  sampling_ratio=sampling_ratio,
                                  seed=seed,
                                  use_fft=use_fft,
-                                 preproc_dir=preproc_dir)
+                                 preproc_dir=preproc_dir,
+                                 dense_labels=dense_labels)
 
         if split == 'train':
             shuffle = True

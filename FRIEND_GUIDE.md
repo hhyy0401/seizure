@@ -46,6 +46,8 @@ Test AUROC/F1 are dumped to `$SAVE_DIR/test_results.npz`.
 | [sbatch/train/baseline_chb.sbatch](sbatch/train/baseline_chb.sbatch) | CHB runner — evolvegcn / graphs4mer |
 | [sbatch/train/baseline_chb_lbd.sbatch](sbatch/train/baseline_chb_lbd.sbatch) | CHB runner — lstm / cnnlstm / BIOT / dcrnn / gru_gcn |
 | [sbatch/train/baseline_tusz.sbatch](sbatch/train/baseline_tusz.sbatch) | TUSZ counterpart (evolvegcn / graphs4mer) |
+| [sbatch/train/baseline_tusz_lbd.sbatch](sbatch/train/baseline_tusz_lbd.sbatch) | TUSZ runner — lstm / cnnlstm / BIOT / dcrnn / gru_gcn |
+| [sbatch/train/baseline_foundation.sbatch](sbatch/train/baseline_foundation.sbatch) | TUSZ + CHB runner — labram / eegpt (see § EEG foundation-model baselines) |
 | [src/run_classical.py](src/run_classical.py) | Classical-ML baseline trainer: SVM / Random Forest on FFT features (clip-level only) |
 | [sbatch/train/baseline_classical.sbatch](sbatch/train/baseline_classical.sbatch) | Runner for the classical baselines (works for TUSZ + CHB, 12s + 60s) |
 

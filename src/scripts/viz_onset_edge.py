@@ -43,6 +43,15 @@ plt.rcParams.update({
 })
 
 
+import re
+_PANEL_PREFIX_RE = re.compile(r"^\([a-zA-Z0-9]+\)\s+")
+
+
+def _strip_panel_prefix(s):
+    """Strip leading '(a) ' / '(b) ' etc. so titles can be re-used as plain names."""
+    return _PANEL_PREFIX_RE.sub("", s)
+
+
 def find_onset(dy_row):
     """First 0→1 transition (or first ictal second); -1 if never seizure."""
     idx = np.where(dy_row > 0)[0]
@@ -666,11 +675,12 @@ def make_clip_heatmap_with_transitions_pdf(clip_M, dense_y_row,
                                             ch_names, out_path):
     """Single-clip heatmap with ALL visible transition lines (red=onset 0→1,
     blue=offset 1→0) AND 'seizure' / 'non-seizure' text per segment.
-    cividis, p5–p95 stretch. Title-less."""
+    Data-driven cividis range with 3 ticks rounded to 2 decimals."""
     T, N = clip_M.shape
     heat = clip_M.T.astype(np.float32)
-    # Fixed range matching topo3 colorbar for cross-figure consistency.
-    vmin, vmax = 0.48, 0.52
+    # Per-clip auto range so colors actually use the cmap's full span.
+    vmin, vmax = float(heat.min()), float(heat.max())
+    if vmax - vmin < 1e-4: vmin, vmax = vmin - 0.01, vmax + 0.01
 
     starts, ends = find_transitions(dense_y_row)
 
@@ -678,24 +688,25 @@ def make_clip_heatmap_with_transitions_pdf(clip_M, dense_y_row,
     ax = fig.add_subplot(1, 1, 1)
     im = ax.imshow(heat, aspect="auto", cmap="cividis",
                    vmin=vmin, vmax=vmax, interpolation="nearest")
-    ax.set_yticks(range(N)); ax.set_yticklabels(ch_names, fontsize=28)
+    ax.set_yticks(range(N)); ax.set_yticklabels(ch_names, fontsize=30)
     _color_tick_labels(ax, "y", ch_names)
     xtick = np.arange(0, T, max(1, T // 6))
-    ax.set_xticks(xtick); ax.set_xticklabels(xtick, fontsize=30)
-    ax.set_xlabel("Time (s)", fontsize=34)
-    ax.set_ylabel("Channel", fontsize=34)
+    ax.set_xticks(xtick); ax.set_xticklabels(xtick, fontsize=32)
+    ax.set_xlabel("Time (s)", fontsize=36)
+    ax.set_ylabel("Channel", fontsize=36)
     for s in starts: _draw_onset_line(ax, s)
     for e in ends:
         ax.axvline(e, color="white",  linestyle="-",  lw=5.2, alpha=0.95, zorder=5)
         ax.axvline(e, color="#0066ff", linestyle="--", lw=3.6, alpha=1.0, zorder=6)
     # 'seizure' / 'non-seizure' segment labels right above the data area.
     _annotate_segments(ax, dense_y_row, T, ymin=-0.7)
-    cb = fig.colorbar(im, ax=ax, fraction=0.030, pad=0.02,
+    cb = fig.colorbar(im, ax=ax, fraction=0.030, pad=0.045,
                       shrink=0.55, aspect=14)
-    cb.set_ticks([0.48, 0.50, 0.52])
-    cb.set_ticklabels(["0.48", "0.50", "0.52"])
-    cb.set_label("Mean membership", fontsize=28, labelpad=12)
-    cb.ax.tick_params(labelsize=26, length=8, width=1.4, pad=6)
+    mid = 0.5 * (vmin + vmax)
+    cb.set_ticks([vmin, mid, vmax])
+    cb.set_ticklabels([f"{vmin:.2f}", f"{mid:.2f}", f"{vmax:.2f}"])
+    cb.set_label("Mean membership", fontsize=38, labelpad=14)
+    cb.ax.tick_params(labelsize=36, length=10, width=1.6, pad=8)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -711,39 +722,43 @@ def make_clip_topomap_around_t_pdf(clip_M, anchor_t, win, ch_names, ch_pos,
     T, N = clip_M.shape
     pre  = clip_M[max(0, anchor_t - win):anchor_t,           :].astype(np.float32).mean(axis=0)
     post = clip_M[anchor_t:min(T, anchor_t + win + 1),       :].astype(np.float32).mean(axis=0)
-    # Unified labels across all clips (matches EvoBrain Fig 6 narrative).
+    # Labels follow the actual seizure state of each window.
+    # anchor='onset'  → pre is non-seizure (Pre-seizure), post is ictal (Seizure).
+    # anchor='offset' → pre is ictal (Seizure), post is non-seizure (Post-seizure).
+    if anchor_label == "offset":
+        pre_lbl, post_lbl = "Seizure", "Post-seizure"
+    else:
+        pre_lbl, post_lbl = "Pre-seizure", "Seizure"
     panels = [
-        ("(a) Normal",        nonsz_spatial),
-        ("(b) Pre-seizure",   pre),
-        ("(c) Post-seizure",  post),
+        ("Normal",  nonsz_spatial),
+        (pre_lbl,   pre),
+        (post_lbl,  post),
     ]
     # Fixed colorbar range across ALL clips for visual consistency. Values
     # outside [0.48, 0.52] saturate at the colormap extremes.
     vmin, vmax = 0.48, 0.52
 
     fig = plt.figure(figsize=(22, 8.6))
-    gs = fig.add_gridspec(1, 3, wspace=0.12, top=0.95,
-                          left=0.02, right=0.92)
-    DOT, LBL, TIT = 1750, 20, 30
+    gs = fig.add_gridspec(1, 3, wspace=-0.18, top=0.88,
+                          left=0.02, right=0.94)
+    DOT, LBL, TIT = 2200, 24, 38
     last_sc = None
     axes = []
     for i, (ttl, vec) in enumerate(panels):
         ax = fig.add_subplot(gs[0, i]); axes.append(ax)
-        # Empty title to topomap fn; we put the caption BELOW instead.
         last_sc = _topomap_on_dot(
             ax, vec, ch_names, ch_pos, "", "cividis", vmin, vmax,
             dot_size=DOT, label_size=LBL, title_size=TIT)
-        ax.set_title(ttl, fontsize=TIT, pad=8,
-                     fontweight="bold", y=-0.12)
+        ax.set_title(ttl, fontsize=TIT, pad=12, fontweight="bold")
     # Fixed 3 ticks at 0.48 / 0.50 / 0.52 (membership baseline ~0.5, signal
     # range ±0.03). The data range itself can extend slightly beyond these
     # — the ticks are labels, not clipping bounds.
-    cb = fig.colorbar(last_sc, ax=axes, fraction=0.018, pad=0.025,
+    cb = fig.colorbar(last_sc, ax=axes, fraction=0.018, pad=0.008,
                        shrink=0.55, aspect=14)
     cb.set_ticks([0.48, 0.50, 0.52])
     cb.set_ticklabels(["0.48", "0.50", "0.52"])
-    cb.set_label("Mean membership", fontsize=26, labelpad=12)
-    cb.ax.tick_params(labelsize=26, length=8, width=1.4, pad=6)
+    cb.set_label("Mean membership", fontsize=32, labelpad=12)
+    cb.ax.tick_params(labelsize=32, length=9, width=1.5, pad=6)
     fig.savefig(out_path)
     plt.close(fig)
     print(f"wrote {out_path}")
@@ -878,8 +893,8 @@ def make_per_clip_pair(M, y, y_prob, dense_y, edge_idx, ch_names, ch_pos,
 
 
 def _draw_head_edges(ax, edge_w, ch_names, ch_pos, vmin, vmax, top_k=10,
-                     cmap_name="cividis", node_size=1750, label_size=20,
-                     edge_lw=4.5):
+                     cmap_name="cividis", node_size=2200, label_size=24,
+                     edge_lw=5.5):
     """Head topomap with top-k strongest pairwise edges drawn as colored lines.
     EvoBrain Fig 6 style: blue nodes labeled with channel names, edge color
     on cividis (yellow=strong, dark=weak)."""
@@ -999,26 +1014,27 @@ def make_evobrain_style_figure(M_clip, baseline, snapshot_times, win,
 # the same graph topology on our head template / cividis colormap.
 EVOBRAIN_FIG6_EDGES = {
     "(a) Normal": [
-        ("F3", "FZ"),  ("FZ", "F4"), ("F4", "F8"), ("F3", "C3"),
-        ("C3", "CZ"),  ("FZ", "CZ"), ("CZ", "C4"), ("CZ", "PZ"),
-        ("C4", "P4"),  ("O1", "O2"),
+        ("F3", "C3"), ("C3", "CZ"), ("FZ", "CZ"), ("CZ", "PZ"),
+        ("FZ", "F4"), ("FZ", "C4"), ("CZ", "C4"), ("C4", "F8"),
+        ("C4", "P4"), ("T5", "P3"), ("O1", "O2"),
     ],
     "(b) Pre-seizure": [
-        ("C3", "CZ"), ("C3", "T5"), ("C3", "P3"), ("C3", "PZ"),
-        ("T5", "P3"), ("T5", "O1"), ("P3", "O1"), ("P3", "PZ"),
-        ("PZ", "P4"), ("P4", "O2"),
+        ("T3", "C3"), ("C3", "CZ"), ("CZ", "PZ"), ("PZ", "O2"),
+        ("O2", "P4"), ("C3", "T5"), ("C3", "P3"), ("C3", "O1"),
+        ("T5", "P3"), ("P3", "O1"), ("P3", "PZ"), ("PZ", "O1"),
     ],
-    "(c) Post-seizure": [
-        ("F7", "F3"), ("F3", "FP1"), ("F3", "FZ"), ("F7", "T3"),
-        ("F3", "T3"), ("F3", "C3"),  ("T3", "C3"), ("T3", "T5"),
-        ("C3", "T5"), ("T5", "P3"),
+    "(c) Seizure": [
+        ("C3", "FP2"), ("C3", "P3"), ("C3", "T5"), ("C3", "F3"),
+        ("T5", "FP1"), ("T5", "T3"), ("T5", "F7"), ("T3", "F7"),
+        ("T3", "F3"),  ("T3", "FP1"), ("F7", "F3"), ("F3", "FP1"),
+        ("F7", "FP1"),
     ],
 }
 
 
 def _draw_head_with_fixed_edges(ax, edges, ch_names, ch_pos,
                                 node_color="#2e3a8c", edge_color="black",
-                                edge_lw=4.0, node_size=1750, label_size=20):
+                                edge_lw=5.0, node_size=2200, label_size=24):
     """Head template with explicit edge list, all edges drawn uniformly
     (same color, same thickness). Matches our scenarios figure's node
     style (navy nodes + white labels) — used for EvoBrain Fig 6 topology
@@ -1041,7 +1057,7 @@ def _draw_head_with_fixed_edges(ax, edges, ch_names, ch_pos,
 
 
 def make_evobrain_repro_figure(panel_dict, ch_names, ch_pos, out_path,
-                                node_size=1750, label_size=20):
+                                node_size=2200, label_size=24):
     """Reproduce EvoBrain Fig 6's (a)(b)(c) rightmost panels on OUR head
     template — IDENTICAL figsize / gridspec / node size / label size /
     caption placement as `make_evobrain_scenarios_figure` and the topo3
@@ -1052,16 +1068,17 @@ def make_evobrain_repro_figure(panel_dict, ch_names, ch_pos, out_path,
     nP = len(labels)
     # Match topo3 / scenarios figure exactly.
     fig = plt.figure(figsize=(22, 8.6))
-    gs = fig.add_gridspec(1, nP, wspace=0.12, top=0.95, left=0.02,
-                          right=0.92)
+    gs = fig.add_gridspec(1, nP, wspace=-0.18, top=0.88, left=0.02,
+                          right=0.94)
     axes = [fig.add_subplot(gs[0, i]) for i in range(nP)]
     for ax, lbl in zip(axes, labels):
         edges = panel_dict[lbl]
         _draw_head_with_fixed_edges(
             ax, edges, ch_names, ch_pos,
-            node_color="#2e3a8c", edge_color="black", edge_lw=4.0,
+            node_color="#2e3a8c", edge_color="black", edge_lw=5.0,
             node_size=node_size, label_size=label_size)
-        ax.set_title(lbl, fontsize=30, pad=8, fontweight="bold", y=-0.12)
+        title = _strip_panel_prefix(lbl)
+        ax.set_title(title, fontsize=38, pad=12, fontweight="bold")
 
     fig.savefig(out_path)
     plt.close(fig)
@@ -1070,7 +1087,7 @@ def make_evobrain_repro_figure(panel_dict, ch_names, ch_pos, out_path,
 
 def make_evobrain_scenarios_figure(M_all, baseline, scenarios, win,
                                     ch_names, ch_pos, out_path,
-                                    top_k=10, node_size=1750, label_size=20):
+                                    top_k=10, node_size=2200, label_size=24):
     """1×N row of EvoBrain Fig 6 style mini-heads, one snapshot per scenario.
     scenarios: list of (clip_idx, t, panel_label). All panels share one color
     scale (matches EvoBrain: weak / medium / strong vs. shared 'Strong'→'Weak'
@@ -1098,22 +1115,23 @@ def make_evobrain_scenarios_figure(M_all, baseline, scenarios, win,
 
     nP = len(scenarios)
     fig = plt.figure(figsize=(22, 8.6))
-    gs = fig.add_gridspec(1, nP, wspace=0.12, top=0.95, left=0.02,
-                          right=0.92)
+    gs = fig.add_gridspec(1, nP, wspace=-0.18, top=0.88, left=0.02,
+                          right=0.94)
     axes = [fig.add_subplot(gs[0, i]) for i in range(nP)]
     for ax, (cid, t, lbl), em in zip(axes, scenarios, edge_mats):
         _draw_head_edges(ax, em, ch_names, ch_pos, vmin, vmax, top_k=top_k,
                          node_size=node_size, label_size=label_size,
-                         edge_lw=4.5)
-        ax.set_title(lbl, fontsize=30, pad=8, fontweight="bold", y=-0.12)
+                         edge_lw=5.5)
+        title = _strip_panel_prefix(lbl)
+        ax.set_title(title, fontsize=38, pad=12, fontweight="bold")
 
     # Right-side shared Weak→Strong colorbar (matches topo3 colorbar size).
     sm = plt.cm.ScalarMappable(
         cmap="cividis", norm=mcolors.Normalize(vmin=vmin, vmax=vmax))
-    cb = fig.colorbar(sm, ax=axes, fraction=0.018, pad=0.025,
+    cb = fig.colorbar(sm, ax=axes, fraction=0.018, pad=0.008,
                       shrink=0.55, aspect=14)
     cb.set_ticks([vmin, vmax]); cb.set_ticklabels(["Weak", "Strong"])
-    cb.ax.tick_params(labelsize=26, length=8, width=1.4, pad=6)
+    cb.ax.tick_params(labelsize=32, length=9, width=1.5, pad=6)
 
     fig.savefig(out_path)
     plt.close(fig)
@@ -1243,9 +1261,9 @@ def main():
         # Topology-only reproduction — uniform black edges, navy nodes,
         # no colorbar. `panel_dict` maps panel-label → edge list.
         panel_dict = {
-            "(a) Normal":        EVOBRAIN_FIG6_EDGES["(a) Normal"],
-            "(b) Pre-seizure":   EVOBRAIN_FIG6_EDGES["(b) Pre-seizure"],
-            "(c) Post-seizure":  EVOBRAIN_FIG6_EDGES["(c) Post-seizure"],
+            "(a) Normal":       EVOBRAIN_FIG6_EDGES["(a) Normal"],
+            "(b) Pre-seizure":  EVOBRAIN_FIG6_EDGES["(b) Pre-seizure"],
+            "(c) Seizure":      EVOBRAIN_FIG6_EDGES["(c) Seizure"],
         }
         out_path = os.path.join(
             a.out_dir, f"{a.seed_tag}_evobrain_fig6_reproduction.pdf")

@@ -355,6 +355,32 @@ sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=CHBMIT,CLIP_LEN=12  sbatch/t
   - LaBraM: `curl -L -o $PRE/labram/braindecode_labram_base.pt https://huggingface.co/braindecode/Labram-Braindecode/resolve/main/braindecode_labram_base.pt`
   - EEGPT: visit `https://figshare.com/s/e37df4f8a907a866df4b` in a browser (figshare's WAF blocks bot downloads), unzip, copy `eegpt_mcae_58chs_4s_large4E.ckpt` to scratch.
 
+### One-shot setup (the friend's first time)
+
+```bash
+# code:
+git clone <repo> && cd seizure
+pip install -r requirements.txt          # pulls braindecode==1.3.2 etc.
+
+# weights (LaBraM auto, EEGPT manual):
+bash scripts/download_pretrained.sh
+# -> downloads LaBraM-base (23 MB) from HF.
+# -> prints figshare URL for EEGPT (974 MB) — you click "Download all" in a
+#    browser, unzip, copy the .ckpt to the path it tells you.
+
+# point sbatch at the weights (defaults already match $PRETRAINED_DIR):
+export LABRAM_CKPT=/path/to/braindecode_labram_base.pt
+export EEGPT_CKPT=/path/to/eegpt_mcae_58chs_4s_large4E.ckpt
+
+# now any of the foundation runs work:
+sbatch --array=0-2 --export=ALL,MODEL=labram,DATASET=TUSZ,CLIP_LEN=12 \
+       sbatch/train/baseline_foundation.sbatch
+```
+
+The LightSTHyper "main result" ckpts (`ckpts/tusz12_E1_noaux_s{123,456,789}/`,
+`ckpts/tusz60_E3_noaux_s{123,456,789}/`) **are shipped in git** (3.3 MB each)
+so the friend can `--test` directly without re-training.
+
 ### Env note (don't bump braindecode)
 
 `pip install braindecode` (no version pin) currently pulls 1.5+, which

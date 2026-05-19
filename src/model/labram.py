@@ -71,6 +71,19 @@ def _load_labram_pretrained(model: nn.Module, ckpt_path: str) -> None:
             else:  # interp
                 print(f"[LaBraM] interpolating {k}: {tuple(sd[k].shape)} -> (1, {target_len}, {sd[k].shape[2]})")
                 sd[k] = _interp_1d(sd[k], target_len)
+    # Drop any key whose shape doesn't match the model — typically the
+    # pretrained classifier head (final_layer.{weight,bias}) which was sized
+    # for the upstream task's class count, not our binary detection head.
+    # braindecode 1.3.x overrides load_state_dict and raises even when
+    # strict=False, so we filter explicitly.
+    skipped_shape_mismatch = []
+    for k in list(sd.keys()):
+        if k in model_sd and sd[k].shape != model_sd[k].shape:
+            skipped_shape_mismatch.append((k, tuple(sd[k].shape), tuple(model_sd[k].shape)))
+            sd.pop(k)
+    for k, ps, ms in skipped_shape_mismatch:
+        print(f"[LaBraM] dropping {k} due to shape mismatch: pretrained {ps} vs model {ms}")
+
     miss, unexp = model.load_state_dict(sd, strict=False)
     print(f"[LaBraM] loaded {ckpt_path}")
     print(f"[LaBraM]   missing {len(miss)} keys (first 5): {miss[:5]}")

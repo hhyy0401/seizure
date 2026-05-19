@@ -692,14 +692,17 @@ def evaluate(
                 y_true_all.append(y_true)
                 y_prob_all.append(y_prob)
             file_name_all.extend(file_name)
-            hidden_all.append(hidden.cpu().reshape(hidden.shape[0], -1))
+            if hidden is not None:
+                hidden_all.append(hidden.cpu().reshape(hidden.shape[0], -1))
 
             # Log info
             progress_bar.update(batch_size)
             if (args.stop == True) and (len(time_list) > 1000):
                 break
 
-    hidden_all = np.concatenate(hidden_all, axis=0)
+    # Some models (labram, eegpt) return hidden=None — leave hidden_all empty.
+    if hidden_all:
+        hidden_all = np.concatenate(hidden_all, axis=0)
 
     # ---- Build unified frame-level and clip-level views from (B, T) accumulators ----
     multi_class_path = (args.num_classes != 1)

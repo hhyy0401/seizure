@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J base_chb
+#SBATCH -J chb_lbd
 #SBATCH -A gts-nimam6-paid
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
@@ -8,24 +8,25 @@
 #SBATCH --gres=gpu:1
 #SBATCH -t 8:00:00
 #SBATCH -p gpu-a100
-#SBATCH -o /storage/scratch1/3/hkim3239/logs/base_chb_%A_%a.out
-#SBATCH -e /storage/scratch1/3/hkim3239/logs/base_chb_%A_%a.err
+#SBATCH -o /storage/scratch1/3/hkim3239/logs/chb_lbd_%A_%a.out
+#SBATCH -e /storage/scratch1/3/hkim3239/logs/chb_lbd_%A_%a.err
 
-# Generic CHB-MIT detection baseline runner for the
-# {evolvegcn, graphs4mer} ports. CHB-MIT has 22 channels.
+# CHB-MIT 12s detection baseline runner for {lstm, cnnlstm, BIOT, dcrnn, gru_gcn}.
 #
-# Override via env vars. Examples:
+# Mirrors baseline_chb.sbatch hyperparameters (epochs / bs / lr / patience).
+# Per-model graph_type:
+#   lstm / cnnlstm  -> none (no graph)
+#   BIOT            -> none (raw input; main.py forces use_fft=False)
+#   dcrnn / gru_gcn -> individual (correlation graph; combined-3D not available on CHB)
 #
-#   sbatch --export=ALL,MODEL=evolvegcn,CLIP_LEN=12,SEED=123 baseline_chb.sbatch
-#   sbatch --export=ALL,MODEL=graphs4mer,CLIP_LEN=60,SEED=123 baseline_chb.sbatch
-#
-# Note: CHB-MIT loader currently supports task=detection only (prediction is
-# blocked with NotImplementedError in data/dataloader_chb.py).
+# Examples:
+#   sbatch --array=0-2 --export=ALL,MODEL=cnnlstm  baseline_chb_lbd.sbatch
+#   sbatch --array=0-2 --export=ALL,MODEL=gru_gcn  baseline_chb_lbd.sbatch
 
 set -euo pipefail
 mkdir -p /storage/scratch1/3/hkim3239/logs
 
-MODEL="${MODEL:?must set MODEL=evolvegcn or MODEL=graphs4mer}"
+MODEL="${MODEL:?must set MODEL=lstm|cnnlstm|BIOT|dcrnn|gru_gcn}"
 CLIP_LEN="${CLIP_LEN:-12}"
 
 SEEDS=(123 456 789)
@@ -38,11 +39,11 @@ fi
 if [ "$CLIP_LEN" = "60" ]; then
     NUM_EPOCHS="${NUM_EPOCHS:-100}"
     TRAIN_BS="${TRAIN_BS:-32}"
-    TEST_BS="${TEST_BS:-64}"
+    TEST_BS="${TEST_BS:-128}"
 else
     NUM_EPOCHS="${NUM_EPOCHS:-100}"
     TRAIN_BS="${TRAIN_BS:-128}"
-    TEST_BS="${TEST_BS:-256}"
+    TEST_BS="${TEST_BS:-512}"
 fi
 
 LR="${LR:-1e-3}"
@@ -50,16 +51,13 @@ PATIENCE="${PATIENCE:-15}"
 L2_WD="${L2_WD:-5e-4}"
 DROPOUT="${DROPOUT:-0.1}"
 EVAL_EVERY="${EVAL_EVERY:-2}"
-NUM_WORKERS="${NUM_WORKERS:-16}"
 
-if [ "$MODEL" = "evolvegcn" ]; then
-    GRAPH_TYPE="dynamic"
-elif [ "$MODEL" = "graphs4mer" ]; then
-    GRAPH_TYPE="none"
-else
-    echo "Unsupported MODEL='$MODEL' (use evolvegcn or graphs4mer)" >&2
-    exit 1
-fi
+case "$MODEL" in
+    lstm|cnnlstm)  GRAPH_TYPE="none";       FFT_FLAG=(--use_fft) ;;
+    BIOT)          GRAPH_TYPE="none";       FFT_FLAG=() ;;  # main.py forces use_fft=False
+    dcrnn|gru_gcn) GRAPH_TYPE="individual"; FFT_FLAG=(--use_fft) ;;
+    *) echo "Unsupported MODEL='$MODEL'" >&2; exit 1 ;;
+esac
 
 ENV_PATH=/storage/scratch1/3/hkim3239/.conda/envs/evobrain
 REPO=/storage/project/r-nimam6-0/hkim3239/disease/src
@@ -85,11 +83,12 @@ python main.py \
     --raw_data_dir "$RAW" --input_dir "$RESAMPLED" \
     --save_dir "$SAVE_DIR" \
     --max_seq_len "$CLIP_LEN" --time_step_size 1 \
-    --graph_type "$GRAPH_TYPE" --top_k 3 --use_fft \
+    --graph_type "$GRAPH_TYPE" --top_k 3 \
+    "${FFT_FLAG[@]}" \
     --dropout "$DROPOUT" --l2_wd "$L2_WD" \
     --num_epochs "$NUM_EPOCHS" \
     --train_batch_size "$TRAIN_BS" --test_batch_size "$TEST_BS" \
-    --lr_init "$LR" --num_workers "$NUM_WORKERS" \
+    --lr_init "$LR" --num_workers 8 \
     --rand_seed "$SEED" --metric_name auroc \
     --eval_every "$EVAL_EVERY" --patience "$PATIENCE" --data_augment \
     --skip_midtest

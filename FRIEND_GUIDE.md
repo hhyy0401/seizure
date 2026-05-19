@@ -1,10 +1,22 @@
-# 친구용 — CHB-MIT 12s detection (EvolveGCN / GraphS4mer baseline)
+# 친구용 — TUSZ / CHB-MIT seizure detection (baselines + LightSTHyper)
 
-This repo lets you reproduce LightSTHyper + two added paper baselines
-**EvolveGCN** (Pareja et al., AAAI 2020) and **GraphS4mer** (Tang et al.,
-CHIL 2023) on CHB-MIT seizure detection, 12-second clip length. The data
-split is **frozen and committed** in [src/data/file_markers_chb/](src/data/file_markers_chb/) —
-no need to regenerate it; just pull the repo and the split is bit-exact.
+This repo lets you reproduce LightSTHyper + paper baselines on
+**TUSZ** (12s & 60s) and **CHB-MIT** (12s) seizure detection.
+The CHB-MIT data split is **frozen and committed** in
+[src/data/file_markers_chb/](src/data/file_markers_chb/) — no need to
+regenerate it; just pull the repo and the split is bit-exact.
+
+**What works out of the box:**
+
+| Task | TUSZ | CHB-MIT |
+|---|---|---|
+| Window detection (clip-level) | ✓ all models | ✓ all models |
+| Pointwise detection (frame-level) | ✓ `*_dense` neural models | ✗ not wired |
+| Prediction (preictal vs interictal) | ✓ neural models (needs prediction markers) | ✗ not wired |
+
+**Models available:**
+- Neural: `light_st_hyper` (ours), `evobrain`, `dcrnn`, `evolvegcn`, `graphs4mer`, `gru_gcn`, `lstm`, `cnnlstm`, `BIOT`, plus all `*_dense` variants for pointwise.
+- Classical: `svm`, `rf` (Random Forest) — see [§ Classical baselines](#classical-baselines-svm--random-forest) below.
 
 ---
 
@@ -30,11 +42,14 @@ Test AUROC/F1 are dumped to `$SAVE_DIR/test_results.npz`.
 |---|---|
 | [src/model/EGCN.py](src/model/EGCN.py) | EvolveGCN-O (verbatim port of IBM/EvolveGCN `egcn_o.py` + classification wrapper) |
 | [src/model/graphs4mer.py](src/model/graphs4mer.py) | GraphS4mer (faithful port of tsy935/graphs4mer; uses Mamba in place of S4 — see docstring for why) |
-| [src/main.py](src/main.py) | dispatches `--model_name evolvegcn` / `--model_name graphs4mer` |
-| [sbatch/train/baseline_chb.sbatch](sbatch/train/baseline_chb.sbatch) | the runner — both models, both clip lengths |
-| [sbatch/train/baseline_tusz.sbatch](sbatch/train/baseline_tusz.sbatch) | TUSZ counterpart |
+| [src/main.py](src/main.py) | dispatches `--model_name evolvegcn` / `--model_name graphs4mer` / `lstm` / `BIOT` / `dcrnn` ... |
+| [sbatch/train/baseline_chb.sbatch](sbatch/train/baseline_chb.sbatch) | CHB runner — evolvegcn / graphs4mer |
+| [sbatch/train/baseline_chb_lbd.sbatch](sbatch/train/baseline_chb_lbd.sbatch) | CHB runner — lstm / cnnlstm / BIOT / dcrnn / gru_gcn |
+| [sbatch/train/baseline_tusz.sbatch](sbatch/train/baseline_tusz.sbatch) | TUSZ counterpart (evolvegcn / graphs4mer) |
+| [src/run_classical.py](src/run_classical.py) | Classical-ML baseline trainer: SVM / Random Forest on FFT features (clip-level only) |
+| [sbatch/train/baseline_classical.sbatch](sbatch/train/baseline_classical.sbatch) | Runner for the classical baselines (works for TUSZ + CHB, 12s + 60s) |
 
-Read the docstrings in the two model files — they explain the API and
+Read the docstrings in the model files — they explain the API and
 the deviations from the original papers.
 
 ---
@@ -155,3 +170,137 @@ For multi-seed mean±std, aggregate `test_results.npz` across the 3 seeds.
 
 Same protocol as the rest of this repo: dev-AUROC-best ckpt, F1 at τ\*
 tuned on dev. Don't report F1@0.5.
+
+---
+
+## Classical baselines (SVM / Random Forest)
+
+**File:** [src/run_classical.py](src/run_classical.py) (standalone — does
+not go through `main.py`).
+**Sbatch:** [sbatch/train/baseline_classical.sbatch](sbatch/train/baseline_classical.sbatch)
+
+**Pipeline:** Loads (T, N, F)-shaped log-FFT clips through the **same
+dataloader the neural baselines use** (CHB-MIT via `dataloader_chb.py`,
+TUSZ via `dataloader_detection.py`, `use_fft=True`), then reduces to a
+per-clip feature vector. Fits sklearn's `SVC(kernel='rbf')` /
+`RandomForestClassifier`, evaluates with **dev-AUROC-best test AUROC** and
+**F1 at τ\* tuned on dev** — exact same reporting protocol as the neural runs.
+
+**Feature reduction modes** (`--feature_mode`):
+- `mean` (recommended): mean log-FFT over time → (N · F)-dim per clip
+  (≈ 1900 for TUSZ-19ch, ≈ 2200 for CHB-22ch). Defendable, matches what
+  the neural baselines see, statistically sound given small balanced train set.
+- `flatten`: full flatten of (T, N, F) → up to 26,400-dim. More info but
+  curse of dimensionality and slow SVC.
+
+**Hyperparameter modes** (`--vanilla`):
+- default: `class_weight='balanced'`, RF `n_estimators=200`.
+- `--vanilla`: `class_weight=None`, RF `n_estimators=100`. Matches sklearn
+  defaults; closest plausible approximation to the published
+  EvoBrain-Table-1 SVM/RF setup (their spec is not released).
+
+**Examples:**
+```bash
+# CHB-MIT 12s detection, SVM, 3 seeds (vanilla mean, default for paper-style reporting)
+for SEED in 123 456 789; do
+  sbatch --export=ALL,DATASET=CHBMIT,MODEL=svm,FEAT=mean,SEED=$SEED,CLIP_LEN=12,VANILLA=1 \
+      sbatch/train/baseline_classical.sbatch
+done
+
+# TUSZ 60s detection, Random Forest, 3 seeds (vanilla mean)
+for SEED in 123 456 789; do
+  sbatch --export=ALL,DATASET=TUSZ,MODEL=rf,FEAT=mean,SEED=$SEED,CLIP_LEN=60,VANILLA=1 \
+      sbatch/train/baseline_classical.sbatch
+done
+
+# Compare to the strongly-regularized "balanced" variant (drop VANILLA=1)
+sbatch --export=ALL,DATASET=TUSZ,MODEL=rf,FEAT=flatten,SEED=123,CLIP_LEN=12 \
+    sbatch/train/baseline_classical.sbatch
+```
+
+**Output:** `runs/<model>_<dataset>12_<feat>[_vanilla]_s<seed>_<jobid>/results.json`
+contains `test_AUROC`, `test_F1`, `tau_star_on_dev`, etc.
+
+**Caveats:**
+- SVM/RF are inherently **clip-level**. Pointwise / frame-level prediction
+  is not implemented — would need one classifier per timestep or a
+  rolling window adaptation.
+- Prediction (preictal vs interictal) is not implemented in
+  `run_classical.py` either — only `--task detection`. Easy to extend
+  by adding `from data.dataloader_prediction import load_dataset_prediction`
+  and dispatching on `--task`.
+
+---
+
+## Pointwise (frame-level) detection — TUSZ only
+
+The repo has per-second `_dense` variants for the neural models. CHB-MIT
+**is not wired up** for pointwise (the CHB loader explicitly raises
+NotImplementedError when `dense_labels=True`).
+
+**Available `*_dense` models** (set via `--model_name`):
+- `light_dense_hyper` (ours, per-t HyperedgeBlock)
+- `evobrain_dense`, `dcrnn_dense`, `gru_gcn_dense`, `lstm_dense`,
+  `cnnlstm_dense`, `biot_dense`
+
+All `*_dense` models **require** `--dense_labels`. The dataloader then
+returns per-second labels y of shape (T,), the model emits (B, T, 1)
+logits, trainer does BCE over (B, T).
+
+**Smoothness regularizer (optional):**
+`--smooth_weight λ` adds an L2 penalty on adjacent-timestep logit
+differences, encoding the prior that seizures are continuous in time:
+loss = BCE + λ · mean((logits[:, t+1] − logits[:, t])²)
+
+**Example (TUSZ 60s, our `light_dense_hyper`, 3 seeds):**
+```bash
+for SEED in 123 456 789; do
+  python src/main.py \
+      --dataset TUSZ --task detection --model_name light_dense_hyper \
+      --dense_labels --max_seq_len 60 --time_step_size 1 \
+      --num_nodes 19 \
+      --raw_data_dir $TUSZ_RAW --input_dir $TUSZ_RESAMPLED \
+      --preproc_dir $TUSZ_PREPROC_60s \
+      --use_fft --graph_type none \
+      --rand_seed $SEED --num_epochs 100 --patience 15 \
+      --train_batch_size 32 --test_batch_size 64 \
+      --lr_init 1e-3 --l2_wd 5e-4 \
+      --metric_name auroc --eval_every 2 --skip_midtest \
+      --smooth_weight 0.05 \
+      --save_dir runs/light_dense_hyper_tusz60_s${SEED}
+done
+```
+
+Swap `--model_name` to use a baseline (`evobrain_dense`, `lstm_dense`,
+`biot_dense`, etc.). Reporting is per-frame AUROC + F1@τ\* (computed
+automatically by `main.py --test` path).
+
+---
+
+## Prediction (preictal vs interictal) — TUSZ only
+
+Loader exists ([src/data/dataloader_prediction.py](src/data/dataloader_prediction.py))
+but **prediction markers (`src/data/file_markers_prediction/`) are NOT
+committed**. You need to generate them (analogous to
+[src/data/build_file_markers_v206.py](src/data/build_file_markers_v206.py)
+for detection) or copy them in from your prior pipeline.
+
+The CHB-MIT loader explicitly blocks prediction with NotImplementedError —
+needs a port (parse preictal windows from `chbXX-summary.txt`, build
+markers, expose the task in `dataloader_chb.py`'s entry point).
+
+Once `file_markers_prediction/` is in place:
+```bash
+python src/main.py \
+    --dataset TUSZ --task prediction --model_name lstm \
+    --max_seq_len 12 --num_nodes 19 \
+    --raw_data_dir $TUSZ_RAW --input_dir $TUSZ_RESAMPLED \
+    --use_fft --graph_type none \
+    --train_batch_size 128 --test_batch_size 256 \
+    --num_epochs 80 --patience 10 --lr_init 1e-3 \
+    --rand_seed 123 --metric_name auroc --skip_midtest --eval_every 2 \
+    --save_dir runs/lstm_pred_tusz12_s123
+```
+
+Same pattern works for `BIOT`, `dcrnn`, `evolvegcn`, etc. (binary clip-
+level classifiers).

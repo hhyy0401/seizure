@@ -37,13 +37,19 @@ def _load_eegpt_pretrained(model: nn.Module, ckpt_path: str) -> None:
             if k in sd and isinstance(sd[k], dict):
                 sd = sd[k]
                 break
+    # The slim ckpt is stored fp16 to fit under 100 MB; cast every tensor
+    # back to fp32 so it matches the randomly-initialised chan_conv / head
+    # layers and doesn't trip "Input type (Half) and bias type (float)".
     cleaned = {}
     for k, v in sd.items():
         nk = k
         for pfx in ("model.", "module."):
             if nk.startswith(pfx):
                 nk = nk[len(pfx):]
-        cleaned[nk] = v
+        if isinstance(v, torch.Tensor) and v.dtype == torch.float16:
+            cleaned[nk] = v.to(torch.float32)
+        else:
+            cleaned[nk] = v
     miss, unexp = model.load_state_dict(cleaned, strict=False)
     print(f"[EEGPT] loaded {ckpt_path}")
     print(f"[EEGPT]   missing {len(miss)} keys (first 5): {miss[:5]}")

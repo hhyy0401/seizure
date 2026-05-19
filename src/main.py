@@ -59,6 +59,14 @@ def main(args):
         # Raw-signal foundation models — BIOT does its own STFT,
         # LaBraM/EEGPT consume raw EEG (200 Hz / interpolated to 256 Hz).
         args.use_fft = False
+        # The preproc cache only stores FFT magnitudes (input_dim=100 per
+        # 1-s window), so loading from it ignores --use_fft=False and feeds
+        # the model FFT bins instead of raw 200 samples. Force on-the-fly
+        # extraction for the foundation models so they get the raw signal.
+        if args.model_name in ("labram", "eegpt") and args.preproc_dir is not None:
+            print(f"[main] {args.model_name} needs raw signal — ignoring "
+                  f"--preproc_dir {args.preproc_dir}")
+            args.preproc_dir = None
 
     # Build dataset
     log.info('Building dataset...')

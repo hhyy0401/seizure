@@ -355,3 +355,11 @@ sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=CHBMIT,CLIP_LEN=12  sbatch/t
   - LaBraM: `curl -L -o $PRE/labram/braindecode_labram_base.pt https://huggingface.co/braindecode/Labram-Braindecode/resolve/main/braindecode_labram_base.pt`
   - EEGPT: visit `https://figshare.com/s/e37df4f8a907a866df4b` in a browser (figshare's WAF blocks bot downloads), unzip, copy `eegpt_mcae_58chs_4s_large4E.ckpt` to scratch.
 
+### Env note (don't bump braindecode)
+
+`pip install braindecode` (no version pin) currently pulls 1.5+, which
+requires torch>=2.10 — that upgrade breaks `mamba-ssm==2.2.4` (used by
+`light_st_hyper`'s Mamba backbone) and `libtorch_global_deps.so` ends up
+missing. **Pin to `braindecode==1.3.2`** (the latest 1.x that still
+accepts torch 2.5.1). See [requirements.txt](requirements.txt).
+

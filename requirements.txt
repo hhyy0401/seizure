@@ -19,3 +19,6 @@ more_itertools==8.12.0
 opt_einsum==3.4.0
 pytorch_lightning==2.5.0.post0
 dotted_dict==1.1.3
+# Foundation-model baselines (labram). braindecode>=1.4 pins torch>=2.10
+# which is incompatible with mamba-ssm 2.2.4 — keep at 1.3.2.
+braindecode==1.3.2

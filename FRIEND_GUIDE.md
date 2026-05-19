@@ -304,3 +304,54 @@ python src/main.py \
 
 Same pattern works for `BIOT`, `dcrnn`, `evolvegcn`, etc. (binary clip-
 level classifiers).
+
+---
+
+## EEG foundation-model baselines (LaBraM + EEGPT)
+
+To match the EvoBrain (NeurIPS 2025) Table 1 foundation-model column we
+ship end-to-end fine-tuning of two pretrained encoders:
+
+| Model | Source | Pretrained weight |
+|---|---|---|
+| **LaBraM** (Jiang et al., ICLR 2024) | `braindecode.models.Labram` (re-keyed version of `935963004/LaBraM`) | `braindecode_labram_base.pt` (23 MB) — pulled once from HuggingFace |
+| **EEGPT** (Wang et al., NeurIPS 2024) | Vendored from `BINE022/EEGPT` (figshare 25866970) | `eegpt_mcae_58chs_4s_large4E.ckpt` (974 MB) |
+
+Both weights live on scratch (the project repo only holds code + light ckpts):
+
+```
+/storage/scratch1/3/hkim3239/eeg/pretrained/labram/braindecode_labram_base.pt
+/storage/scratch1/3/hkim3239/eeg/pretrained/eegpt/eegpt_mcae_58chs_4s_large4E.ckpt
+```
+
+### Files
+
+| File | Purpose |
+|---|---|
+| [src/model/labram.py](src/model/labram.py) | `LaBraM_classification` wrapper. Uses `braindecode.models.Labram`; loads ckpt with `strict=False`; reshapes our dataloader's `(B, T, N, 200)` to `(B, N, T*200)`. |
+| [src/model/eegpt.py](src/model/eegpt.py) | `EEGPT_classification` wrapper. Builds `EEGPTClassifier` with `use_chan_conv=True` so any channel montage is projected to the pretrained 58-channel space; lets the model's internal `temporal_interpolation` resample our 12/60-s clips to the pretrained 4-s window. |
+| [src/model/eegpt_pretrained/](src/model/eegpt_pretrained/) | Vendored encoder + classifier code from the EEGPT figshare share (verbatim). |
+| [sbatch/train/baseline_foundation.sbatch](sbatch/train/baseline_foundation.sbatch) | `MODEL=labram\|eegpt × DATASET=TUSZ\|CHBMIT × CLIP_LEN=12\|60`. Uses lr=5e-4, weight_decay=0.05, smaller batches than baseline runners. |
+
+### Run
+
+```bash
+# TUSZ 12s — both foundation models, 3 seeds each
+sbatch --array=0-2 --export=ALL,MODEL=labram,DATASET=TUSZ,CLIP_LEN=12   sbatch/train/baseline_foundation.sbatch
+sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=TUSZ,CLIP_LEN=12    sbatch/train/baseline_foundation.sbatch
+# TUSZ 60s
+sbatch --array=0-2 --export=ALL,MODEL=labram,DATASET=TUSZ,CLIP_LEN=60   sbatch/train/baseline_foundation.sbatch
+sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=TUSZ,CLIP_LEN=60    sbatch/train/baseline_foundation.sbatch
+# CHB-MIT 12s
+sbatch --array=0-2 --export=ALL,MODEL=labram,DATASET=CHBMIT,CLIP_LEN=12 sbatch/train/baseline_foundation.sbatch
+sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=CHBMIT,CLIP_LEN=12  sbatch/train/baseline_foundation.sbatch
+```
+
+### Caveats worth flagging in the paper
+
+- **EEGPT context length.** EEGPT was pretrained on 4-second windows. We feed 12/60-s clips and the model's built-in `temporal_interpolation` downsamples to 4 s, which loses temporal resolution. This is the same protocol the EvoBrain paper used (their reported numbers: AUROC 0.803/0.743 on TUSZ 12s/60s).
+- **CHB-MIT bipolar montage.** Both pretrained encoders expect referential channels. For CHB-MIT we keep the bipolar `X-Y` channels and rely on `use_chan_conv=True` to learn a projection — this is the same trade-off BIOT makes for cross-montage transfer. Numbers may be slightly pessimistic vs. a referential CHB-MIT setup.
+- **Pretrained weights are not in git.** They sit on scratch (see paths above). To re-download from scratch:
+  - LaBraM: `curl -L -o $PRE/labram/braindecode_labram_base.pt https://huggingface.co/braindecode/Labram-Braindecode/resolve/main/braindecode_labram_base.pt`
+  - EEGPT: visit `https://figshare.com/s/e37df4f8a907a866df4b` in a browser (figshare's WAF blocks bot downloads), unzip, copy `eegpt_mcae_58chs_4s_large4E.ckpt` to scratch.
+

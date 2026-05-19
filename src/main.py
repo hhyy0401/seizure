@@ -55,7 +55,9 @@ def main(args):
     tbx = SummaryWriter(args.save_dir)
     log.info('Args: {}'.format(dumps(vars(args), indent=4, sort_keys=True)))
 
-    if args.model_name == "BIOT":
+    if args.model_name in ("BIOT", "labram", "eegpt"):
+        # Raw-signal foundation models — BIOT does its own STFT,
+        # LaBraM/EEGPT consume raw EEG (200 Hz / interpolated to 256 Hz).
         args.use_fft = False
 
     # Build dataset
@@ -221,6 +223,12 @@ def main(args):
         model = LSTMModel(args, args.num_classes, device)
     elif args.model_name == "cnnlstm":
         model = CNN_LSTM(args.num_classes, args.dataset)
+    elif args.model_name == "labram":
+        from model.labram import LaBraM_classification
+        model = LaBraM_classification(args=args, num_classes=args.num_classes, device=device)
+    elif args.model_name == "eegpt":
+        from model.eegpt import EEGPT_classification
+        model = EEGPT_classification(args=args, num_classes=args.num_classes, device=device)
     else:
         raise NotImplementedError
 
@@ -408,7 +416,7 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                     logits, _ = model(x, seq_lengths, adj)
                 elif args.model_name in ("dcrnn", "dcrnn_dense"):
                     logits, _ = model(x, seq_lengths, supports)
-                elif args.model_name in ("BIOT", "biot_dense"):
+                elif args.model_name in ("BIOT", "biot_dense", "labram", "eegpt"):
                     logits, _ = model(x)
                 elif args.model_name in ("lstm", "cnnlstm", "graphs4mer",
                                           "lstm_dense", "cnnlstm_dense"):
@@ -492,14 +500,17 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                                        eval_results[args.metric_name])
 
                 # Mid-training test snapshot (logged but not used for saving/early-stop).
-                mid_test_results = evaluate(model,
-                                            dataloaders['test'],
-                                            args,
-                                            save_dir,
-                                            device,
-                                            log,
-                                            is_test=True,
-                                            nll_meter=None)
+                if not getattr(args, 'skip_midtest', False):
+                    mid_test_results = evaluate(model,
+                                                dataloaders['test'],
+                                                args,
+                                                save_dir,
+                                                device,
+                                                log,
+                                                is_test=True,
+                                                nll_meter=None)
+                else:
+                    mid_test_results = None
 
                 # Accumulate patience on the same metric used for ckpt
                 # selection (args.metric_name). dev_loss can decrease forever
@@ -528,19 +539,21 @@ def train(model, dataloaders, args, device, save_dir, log, tbx):
                     ('{}: {:.3f}' if isinstance(v, float) else '{}: {}').format(k, v)
                     for k, v in eval_results.items())
                 log.info('Dev {}'.format(results_str))
-                test_str = ', '.join(
-                    ('{}: {:.3f}' if isinstance(v, float) else '{}: {}').format(k, v)
-                    for k, v in mid_test_results.items())
-                log.info('MidTest {}'.format(test_str))
+                if mid_test_results is not None:
+                    test_str = ', '.join(
+                        ('{}: {:.3f}' if isinstance(v, float) else '{}: {}').format(k, v)
+                        for k, v in mid_test_results.items())
+                    log.info('MidTest {}'.format(test_str))
 
                 # Log to TensorBoard
                 log.info('Visualizing in TensorBoard...')
                 for k, v in eval_results.items():
                     if isinstance(v, (int, float)):
                         tbx.add_scalar('eval/{}'.format(k), v, step)
-                for k, v in mid_test_results.items():
-                    if isinstance(v, (int, float)):
-                        tbx.add_scalar('midtest/{}'.format(k), v, step)
+                if mid_test_results is not None:
+                    for k, v in mid_test_results.items():
+                        if isinstance(v, (int, float)):
+                            tbx.add_scalar('midtest/{}'.format(k), v, step)
 
         # Step lr scheduler
         scheduler.step()
@@ -610,7 +623,7 @@ def evaluate(
                 logits, hidden = model(x, seq_lengths, adj)
             elif args.model_name in ("dcrnn", "dcrnn_dense"):
                 logits, hidden = model(x, seq_lengths, supports)
-            elif args.model_name in ("BIOT", "biot_dense"):
+            elif args.model_name in ("BIOT", "biot_dense", "labram", "eegpt"):
                 logits, hidden = model(x)
             elif args.model_name in ("lstm", "cnnlstm", "graphs4mer",
                                       "lstm_dense", "cnnlstm_dense"):

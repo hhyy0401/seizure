@@ -116,7 +116,13 @@ def get_args():
         "biot_dense",              # paper BIOT (Transformer) + per-t classifier
         # Paper Table 1 baselines:
         "evobrain", "dcrnn", "evolvegcn", "gru_gcn", "graphs4mer", "BIOT", "lstm", "cnnlstm",
+        # EEG foundation models (pretrained encoders, fine-tuned end-to-end):
+        "labram", "eegpt",
     ))
+    parser.add_argument('--pretrained_path', type=str, default=None,
+                        help='Path to a pretrained checkpoint to initialise the model '
+                             '(labram, eegpt). When unset, models fall back to env vars '
+                             'LABRAM_CKPT / EEGPT_CKPT, then to the default scratch paths.')
     parser.add_argument('--n_hyperedges', type=int, default=8,
                         help='Number of hyperedges for light_dyn_hyper/light_static_hyper.')
     parser.add_argument('--use_node_emb', action='store_true', default=False,
@@ -275,6 +281,10 @@ def get_args():
                         default=True,
                         action='store_true',
                         help='Whether perform data augmentation.')
+    parser.add_argument('--skip_midtest',
+                        default=False,
+                        action='store_true',
+                        help='Skip mid-training test-set evaluation (logged but unused for selection).')
     parser.add_argument(
         '--patience',
         type=int,

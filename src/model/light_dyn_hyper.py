@@ -281,6 +281,80 @@ class SpatioTemporalHyperedgeBlock(nn.Module):
         return out, M
 
 
+class AxialPairwiseBlock(nn.Module):
+    """Axial pairwise self-attention: spatial (per t) + temporal (per n).
+
+    Ablation swap for `SpatioTemporalHyperedgeBlock` that removes the
+    hyperedge bottleneck WITHOUT removing block-level temporal mixing.
+    The hyperedge-block pools over (N, T) inside; this axial block routes
+    spatial info via pairwise N×N attention per timestep AND temporal info
+    via pairwise T×T attention per channel — same temporal capacity, no
+    E_h bottleneck.
+
+    Input:  H_seq: (B, T, N, d_in)
+    Output: (out: (B, T, N, d_out), M: (B, T, N, N))
+            — drop-in tuple shape; M is the spatial attention map.
+    """
+
+    def __init__(self, d_in: int, d_out: int, n_heads: int = 4):
+        super().__init__()
+        assert d_in % n_heads == 0, f"d_in={d_in} must divide n_heads={n_heads}"
+        self.d_in = d_in
+        self.d_out = d_out
+        self.n_heads = n_heads
+        self.d_head = d_in // n_heads
+
+        # Spatial pairwise attention (channels attend channels, per timestep).
+        self.W_qs = nn.Linear(d_in, d_in)
+        self.W_ks = nn.Linear(d_in, d_in)
+        self.W_vs = nn.Linear(d_in, d_in)
+        self.ln_s = nn.LayerNorm(d_in)
+
+        # Temporal pairwise attention (timesteps attend timesteps, per channel).
+        self.W_qt = nn.Linear(d_in, d_in)
+        self.W_kt = nn.Linear(d_in, d_in)
+        self.W_vt = nn.Linear(d_in, d_in)
+        self.ln_t = nn.LayerNorm(d_in)
+
+        self.out_proj = nn.Linear(d_in, d_out)
+        self.norm = nn.LayerNorm(d_out)
+        self.res_proj = nn.Linear(d_in, d_out) if d_in != d_out else nn.Identity()
+
+    def _spatial(self, H_seq):
+        B, T, N, d = H_seq.shape
+        h, dh = self.n_heads, self.d_head
+        Q = self.W_qs(H_seq).view(B, T, N, h, dh).permute(0, 1, 3, 2, 4)  # (B,T,h,N,dh)
+        K = self.W_ks(H_seq).view(B, T, N, h, dh).permute(0, 1, 3, 2, 4)
+        V = self.W_vs(H_seq).view(B, T, N, h, dh).permute(0, 1, 3, 2, 4)
+        attn = torch.softmax(
+            torch.einsum("bthnd,bthmd->bthnm", Q, K) / (dh ** 0.5), dim=-1)
+        out = torch.einsum("bthnm,bthmd->bthnd", attn, V)
+        out = out.permute(0, 1, 3, 2, 4).contiguous().view(B, T, N, d)
+        return out, attn.mean(dim=2)                                       # (B,T,N,N)
+
+    def _temporal(self, H_seq):
+        B, T, N, d = H_seq.shape
+        h, dh = self.n_heads, self.d_head
+        Q = self.W_qt(H_seq).view(B, T, N, h, dh).permute(0, 2, 3, 1, 4)  # (B,N,h,T,dh)
+        K = self.W_kt(H_seq).view(B, T, N, h, dh).permute(0, 2, 3, 1, 4)
+        V = self.W_vt(H_seq).view(B, T, N, h, dh).permute(0, 2, 3, 1, 4)
+        attn = torch.softmax(
+            torch.einsum("bnhtd,bnhsd->bnhts", Q, K) / (dh ** 0.5), dim=-1)
+        out = torch.einsum("bnhts,bnhsd->bnhtd", attn, V)
+        out = out.permute(0, 3, 1, 2, 4).contiguous().view(B, T, N, d)
+        return out
+
+    def forward(self, H_seq: torch.Tensor):
+        Hs, attn_s = self._spatial(H_seq)
+        H1 = self.ln_s(H_seq + Hs)                                         # residual + LN
+        Ht = self._temporal(H1)
+        H2 = self.ln_t(H1 + Ht)                                            # residual + LN
+        out = self.out_proj(H2)
+        out = F.gelu(out)
+        out = self.norm(out + self.res_proj(H_seq))                        # outer residual
+        return out, attn_s
+
+
 class LightDynHyper(nn.Module):
     """Per-channel Mamba → 2× HyperedgeBlock → PMA channel readout → FC."""
 
@@ -607,6 +681,8 @@ class LightSTHyper(nn.Module):
                 return AdaptiveSpatioTemporalHyperedgeBlock(d_in, d_out, n_hyperedges=n_hyperedges)
             if hyper_block_type == "iterative":
                 return IterativeSpatioTemporalHyperedgeBlock(d_in, d_out, n_hyperedges=n_hyperedges, n_iters=n_iters)
+            if hyper_block_type == "pairwise":
+                return AxialPairwiseBlock(d_in, d_out, n_heads=4)
             raise ValueError(f"Unknown hyper_block_type: {hyper_block_type}")
 
         layers = []

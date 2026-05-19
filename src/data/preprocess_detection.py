@@ -73,7 +73,7 @@ def main(
         clip_idx = int(h5_fn.split('_')[-1].split('.h5')[0])
         h5_fn = h5_fn.split('.edf')[0] + '.h5'
 
-        eeg_clip, _ = computeSliceMatrix(
+        eeg_clip, _, _ = computeSliceMatrix(
             h5_fn=os.path.join(resample_dir, h5_fn),
             edf_fn=edf_fn_full,
             clip_idx=clip_idx,

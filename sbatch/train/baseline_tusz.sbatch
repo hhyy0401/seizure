@@ -3,8 +3,8 @@
 #SBATCH -A gts-nimam6-paid
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=96G
 #SBATCH --gres=gpu:1
 #SBATCH -t 6:00:00
 #SBATCH -p gpu-a100
@@ -54,6 +54,8 @@ PATIENCE="${PATIENCE:-10}"
 L2_WD="${L2_WD:-5e-4}"
 DROPOUT="${DROPOUT:-0.1}"
 EVAL_EVERY="${EVAL_EVERY:-1}"
+NUM_WORKERS="${NUM_WORKERS:-8}"
+SKIP_MIDTEST="${SKIP_MIDTEST:-0}"  # set to 1 to skip mid-training test eval
 
 # Per-model graph_type: EvolveGCN consumes the dataloader's dynamic adjacency;
 # GraphS4mer learns its own — disable dataloader graph construction for speed.
@@ -93,6 +95,11 @@ source $(conda info --base)/etc/profile.d/conda.sh
 conda activate "$ENV_PATH"
 cd "$REPO"
 
+MIDTEST_FLAG=()
+if [ "$SKIP_MIDTEST" = "1" ]; then
+    MIDTEST_FLAG=(--skip_midtest)
+fi
+
 python main.py \
     --dataset TUSZ --task detection --model_name "$MODEL" \
     --num_nodes 19 \
@@ -103,9 +110,10 @@ python main.py \
     --dropout "$DROPOUT" --l2_wd "$L2_WD" \
     --num_epochs "$NUM_EPOCHS" \
     --train_batch_size "$TRAIN_BS" --test_batch_size "$TEST_BS" \
-    --lr_init "$LR" --num_workers 8 \
+    --lr_init "$LR" --num_workers "$NUM_WORKERS" \
     --rand_seed "$SEED" --metric_name auroc \
-    --eval_every "$EVAL_EVERY" --patience "$PATIENCE" --data_augment
+    --eval_every "$EVAL_EVERY" --patience "$PATIENCE" --data_augment \
+    "${MIDTEST_FLAG[@]}"
 
 echo "End: $(date)"
 ls "$SAVE_DIR"

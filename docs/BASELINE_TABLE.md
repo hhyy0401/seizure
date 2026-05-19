@@ -6,7 +6,8 @@
 ## Last updated
 
 
-2026-05-18 22:39 (local)
+
+2026-05-18 23:39 (local)
 
 ## Source of seeds
 
@@ -26,10 +27,11 @@
 
 
 
+
 | Method | TUSZ 12s AUROC | TUSZ 12s F1 | TUSZ 60s AUROC | TUSZ 60s F1 | CHB-MIT 12s AUROC | CHB-MIT 12s F1 |
 |---|---|---|---|---|---|---|
 | LSTM       | 0.839±0.016 *(n=3)* | 0.403±0.065 *(n=3)* | — | — | 0.823±0.075 *(n=3, w/ ext s123)* | 0.064±0.007 *(n=3, w/ ext s123)* |
-| CNN-LSTM   | 0.819±0.017 *(n=2)* | 0.395±0.001 *(n=2)* | — | — | — | — |
+| CNN-LSTM   | 0.824±0.014 *(n=3)* | 0.365±0.053 *(n=3)* | — | — | — | — |
 | BIOT       | — | — | — | — | 0.903±0.018 *(n=3, w/ ext s123)* | 0.054±0.094 *(n=3, w/ ext s123)* |
 | LaBraM | — | — | — | — | — | — |
 | EEGPT | — | — | — | — | — | — |
@@ -43,6 +45,7 @@
 | **LightSTHyper (E_h=3)** | 0.889±0.006 | 0.504±0.029 | **0.877±0.005** | 0.537±0.039 | **0.904±0.007** | 0.134±0.021 |
 
 ## Aggregated CHB-MIT 12s detail
+
 
 
 
@@ -66,22 +69,36 @@ the latest Phoenix runs (job IDs 8531xxx, 8539xxx — see `/storage/scratch1/3/h
 
 
 
+
 ### Running
-- `8605394` upd_basetbl (0:04)
-- `8605341` regen_evobrain (0:41)
-- `8583940_2` base_chb (3:41:47)
-- `8583940_1` base_chb (3:44:23)
-- `8583940_0` base_chb (3:44:35)
-- `8605124_1` base_fnd (1:23)
-- `8605124_0` base_fnd (2:59)
+- `8605395` upd_basetbl (0:05)
+- `8606367` exp_density_v1pos (47:35)
+- `8605443_1` base_tusz_lbd (27:58)
+- `8583940_2` base_chb (4:41:54)
+- `8583940_1` base_chb (4:44:30)
+- `8583940_0` base_chb (4:44:42)
+- `8605443_0` base_tusz_lbd (56:38)
 
 ### Pending
-- `8605125_[0-2]` base_fnd (0:00)
-- `8605126_[0-2]` base_fnd (0:00)
-- `8605132_[0-2]` base_fnd (0:00)
-- `8605136_[0-2]` base_fnd (0:00)
-- `8605140_[0-2]` base_fnd (0:00)
-- `8605124_[2]` base_fnd (0:00)
+- `8605443_[2]` base_tusz_lbd (0:00)
+- `8606083_[0-2]` base_fnd (0:00)
+- `8606081_[0-2]` base_fnd (0:00)
+- `8606080_[0-2]` base_fnd (0:00)
+- `8605948_[0-2]` base_fnd (0:00)
+- `8605947_[0-2]` base_fnd (0:00)
+- `8605946_[0-2]` base_fnd (0:00)
+- `8605450_[0-2]` base_tusz_lbd (0:00)
+- `8605449_[0-2]` base_tusz_lbd (0:00)
+- `8605448_[0-2]` base_tusz_lbd (0:00)
+- `8605447_[0-2]` base_tusz_lbd (0:00)
+- `8605446_[0-2]` base_tusz_lbd (0:00)
+- `8605445_[0-2]` base_tusz_lbd (0:00)
+- `8605444_[0-2]` base_tusz_lbd (0:00)
+- `8608803` base_fnd (0:00)
+- `8608802` base_fnd (0:00)
+- `8605509` chb_test (0:00)
+- `8605506` chb_test (0:00)
+- `8605504` chb_test (0:00)
 
 ## Not started (manual, no sbatch yet)
 

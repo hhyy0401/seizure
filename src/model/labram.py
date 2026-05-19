@@ -106,11 +106,15 @@ class LaBraM_classification(nn.Module):
             neural_tokenizer=True,
         )
 
+        # Default points at the LaBraM-base weight shipped in the repo
+        # (ckpts/pretrained/labram_base.pt, 23 MB — the braindecode-keyed
+        # mirror of the original 935963004/LaBraM-base). Override via
+        # --pretrained_path or env LABRAM_CKPT.
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _repo_default = os.path.normpath(os.path.join(
+            _here, "..", "..", "ckpts", "pretrained", "labram_base.pt"))
         ckpt = getattr(args, "pretrained_path", None) or os.environ.get(
-            "LABRAM_CKPT",
-            "/storage/scratch1/3/hkim3239/eeg/pretrained/labram/"
-            "braindecode_labram_base.pt",
-        )
+            "LABRAM_CKPT", _repo_default)
         if ckpt and os.path.isfile(ckpt):
             _load_labram_pretrained(self.model, ckpt)
         else:

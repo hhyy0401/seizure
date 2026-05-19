@@ -353,28 +353,19 @@ sbatch --array=0-2 --export=ALL,MODEL=eegpt,DATASET=CHBMIT,CLIP_LEN=12  sbatch/t
 
 - **EEGPT context length.** EEGPT was pretrained on 4-second windows. We feed 12/60-s clips and the model's built-in `temporal_interpolation` downsamples to 4 s, which loses temporal resolution. This is the same protocol the EvoBrain paper used (their reported numbers: AUROC 0.803/0.743 on TUSZ 12s/60s).
 - **CHB-MIT bipolar montage.** Both pretrained encoders expect referential channels. For CHB-MIT we keep the bipolar `X-Y` channels and rely on `use_chan_conv=True` to learn a projection — this is the same trade-off BIOT makes for cross-montage transfer. Numbers may be slightly pessimistic vs. a referential CHB-MIT setup.
-- **Pretrained weights are not in git.** They sit on scratch (see paths above). To re-download from scratch:
-  - LaBraM: `curl -L -o $PRE/labram/braindecode_labram_base.pt https://huggingface.co/braindecode/Labram-Braindecode/resolve/main/braindecode_labram_base.pt`
-  - EEGPT: visit `https://figshare.com/s/e37df4f8a907a866df4b` in a browser (figshare's WAF blocks bot downloads), unzip, copy `eegpt_mcae_58chs_4s_large4E.ckpt` to scratch.
+- **Pretrained weights ship in the repo** under [ckpts/pretrained/](ckpts/pretrained/):
+  - `labram_base.pt` — 23 MB, braindecode-keyed mirror of `935963004/LaBraM`-base.
+  - `eegpt_base_slim_fp16.pt` — 98 MB, slimmed from `eegpt_mcae_58chs_4s_large4E.ckpt` (974 MB) by dropping the pretraining-only `encoder.` / `reconstructor.` sub-modules and casting to fp16. Slim → fits under GitHub's 100 MB single-file limit. Numerically equivalent to the original ckpt for fine-tuning (target_encoder + predictor are kept verbatim).
+  - `src/model/{labram,eegpt}.py` resolves these paths automatically via `__file__`, so a fresh `git clone` runs out of the box.
+  - [scripts/download_pretrained.sh](scripts/download_pretrained.sh) is a fallback only — when the ckpts/ tree is missing (sparse checkout) or you want the original 974 MB Lightning ckpt to re-derive the slim file via [sbatch/figures/slim_eegpt.sbatch](sbatch/figures/slim_eegpt.sbatch).
 
 ### One-shot setup (the friend's first time)
 
 ```bash
-# code:
 git clone <repo> && cd seizure
 pip install -r requirements.txt          # pulls braindecode==1.3.2 etc.
 
-# weights (LaBraM auto, EEGPT manual):
-bash scripts/download_pretrained.sh
-# -> downloads LaBraM-base (23 MB) from HF.
-# -> prints figshare URL for EEGPT (974 MB) — you click "Download all" in a
-#    browser, unzip, copy the .ckpt to the path it tells you.
-
-# point sbatch at the weights (defaults already match $PRETRAINED_DIR):
-export LABRAM_CKPT=/path/to/braindecode_labram_base.pt
-export EEGPT_CKPT=/path/to/eegpt_mcae_58chs_4s_large4E.ckpt
-
-# now any of the foundation runs work:
+# done — pretrained weights already in ckpts/pretrained/
 sbatch --array=0-2 --export=ALL,MODEL=labram,DATASET=TUSZ,CLIP_LEN=12 \
        sbatch/train/baseline_foundation.sbatch
 ```

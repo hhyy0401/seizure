@@ -82,11 +82,15 @@ class EEGPT_classification(nn.Module):
             qkv_bias=True,
         )
 
+        # Default points at the slim fp16 weight shipped in the repo
+        # (ckpts/pretrained/eegpt_base_slim_fp16.pt, 98 MB) so a fresh
+        # clone runs end-to-end without an external download. Override
+        # via --pretrained_path or env EEGPT_CKPT.
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _repo_default = os.path.normpath(os.path.join(
+            _here, "..", "..", "ckpts", "pretrained", "eegpt_base_slim_fp16.pt"))
         ckpt = getattr(args, "pretrained_path", None) or os.environ.get(
-            "EEGPT_CKPT",
-            "/storage/scratch1/3/hkim3239/eeg/pretrained/eegpt/"
-            "eegpt_mcae_58chs_4s_large4E.ckpt",
-        )
+            "EEGPT_CKPT", _repo_default)
         if ckpt and os.path.isfile(ckpt):
             _load_eegpt_pretrained(self.classifier, ckpt)
         else:

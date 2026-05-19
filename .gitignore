@@ -25,6 +25,9 @@ pipeline_backup_*.tar.gz
 *.zip
 # Exception: ship the 3 final paper ckpts (6 MB each)
 !ckpts/**/*.pth.tar
+# Exception: ship the LaBraM/EEGPT pretrained weights — repo defaults loaded
+# by src/model/{labram,eegpt}.py. labram_base.pt = 23 MB, eegpt_base_slim_fp16.pt = 98 MB.
+!ckpts/pretrained/*.pt
 
 # ============================================================
 # Caches & build artifacts

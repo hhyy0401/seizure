@@ -382,3 +382,123 @@ requires torch>=2.10 — that upgrade breaks `mamba-ssm==2.2.4` (used by
 missing. **Pin to `braindecode==1.3.2`** (the latest 1.x that still
 accepts torch 2.5.1). See [requirements.txt](requirements.txt).
 
+
+
+---
+
+## LightSTHyper + Temporal Attention (current best on TUSZ 60s)
+
+After the LightSTHyper sweep (Round 1-3 on `s123`, then 3-seed verification on
+`s456`/`s789`) we found a small architectural addition that consistently helps
+on **TUSZ 60s** — a per-channel temporal self-attention layer wedged between
+the hyperedge stack and the PMA readout. We call it `tattn` (Temporal
+Attention) and it's a CLI flag now.
+
+### What `tattn` is
+
+A per-channel `T × T` multi-head attention block (`nn.MultiheadAttention`,
+4 heads, d_hidden=d_model=128, residual + LayerNorm) applied to the
+post-hyperedge tensor `(B, T, N, d_hidden)`. For each channel `n` the
+timesteps attend to each other bidirectionally — exactly the long-range
+temporal mixing that **uni-directional Mamba** can't produce (Mamba is
+causal, so timestep `t` only sees `≤ t`).
+
+Code: [src/model/light_dyn_hyper.py:TemporalAttentionLayer](src/model/light_dyn_hyper.py)
+
+Insertion point (default `tattn_position=after`):
+
+```
+x → per-channel uni-Mamba → 2× SpatioTemporalHyperedge → ★tattn★ → mean(T) → PMA(N) → FC
+```
+
+The hyperedge `M` membership map is still produced as before (so the
+interpretability story is preserved); `tattn` adds ~100 k params (d² × 4
+projections) and ~5 % wall-time overhead.
+
+### Best TUSZ 60s config (3-seed test, beats GRU-GCN 0.907/0.640 on AUROC)
+
+| Seed | Test AUROC | Test F1 |
+|---|---|---|
+| s123 | 0.907 | 0.560 |
+| s456 | 0.913 | 0.664 |
+| s789 | 0.905 | 0.618 |
+| **mean ± std** | **0.908 ± 0.004** | **0.614 ± 0.052** |
+
+Hyperparameters that won the sweep:
+
+| Flag | Value | Notes |
+|---|---|---|
+| `--model_name` | `light_st_hyper` | unchanged |
+| `--max_seq_len` | `60` | 60-s clips, `--time_step_size 1` |
+| `--n_hyperedges` | `3` | Round 2 winner. {1,2,3} swept; 3 best on 60s. |
+| `--n_hyper_layers` | `2` | hL3 was tested too — slight gain only with 3 seeds, not worth complexity. |
+| `--num_rnn_layers` | `2` | Mamba depth (default). |
+| `--rnn_units` | `128` | d_model = d_hidden. |
+| `--no_bidirectional` |  | uni-Mamba (paper-strict). |
+| `--use_node_emb` |  |  |
+| `--use_fft` |  | log-FFT input. |
+| `--graph_type` | `none` | LightSTHyper builds its own hyperedge graph; no external adj. |
+| `--aux_type` | `none` | **aux loss DISABLED** — both `bce` and `entropy` lost in Round 1. |
+| `--dropout` | `0.2` | Round 1 winner (vs 0.0 default). |
+| `--l2_wd` | `5e-4` |  |
+| `--lr_init` | `1e-3` | Adam. |
+| `--max_grad_norm` | `5.0` |  |
+| `--n_pma_seeds` | `1` |  |
+| `--temporal_attn` |  | **new flag — enables `tattn`.** |
+| `--temporal_attn_heads` | `4` | (default) |
+| `--tattn_n_layers` | `1` | one tattn layer is enough; `2` plateaued at the same dev. |
+| `--tattn_position` | `after` | (default — between hyperedge stack and PMA) |
+| `--tattn_pos_enc` | _off_ | learnable T-positional embedding — tried, no gain. |
+| `--tattn_causal` | _off_ | causal mask hurt — kept bidirectional. |
+| `--use_fft_mixer` | _off_ | FFT mixer variant — tried, didn't help. |
+| `--readout_concat` | _off_ | raw-feature skip — tried, marginal. |
+| `--train_batch_size` | `32` |  |
+| `--test_batch_size` | `64` |  |
+| `--num_epochs` | `40` | cap (best epoch was ~12–25). Original full-train used `100`. |
+| `--patience` | `10` |  |
+| `--eval_every` | `3` | every 3 epochs. |
+| `--data_augment` |  | random-reflect + random-scale (train-only). |
+
+### Reference sbatch — full Round 2/3 invocation
+
+The sweep we used (`sbatch/train/sweep_tusz60_phase3.sbatch`, task 0 =
+`tattn_s456` in the array) shows the exact command. Minimal stand-alone
+invocation:
+
+```bash
+python src/main.py \
+    --dataset TUSZ --task detection --model_name light_st_hyper \
+    --num_nodes 19 --max_seq_len 60 --time_step_size 1 \
+    --raw_data_dir $TUSZ_RAW --input_dir $TUSZ_RESAMPLED \
+    --graph_type none --use_fft --use_node_emb --no_bidirectional \
+    --rnn_units 128 --num_rnn_layers 2 \
+    --n_hyper_layers 2 --n_hyperedges 3 --n_pma_seeds 1 \
+    --aux_type none \
+    --dropout 0.2 --l2_wd 5e-4 --max_grad_norm 5.0 \
+    --num_epochs 40 --patience 10 --eval_every 3 \
+    --train_batch_size 32 --test_batch_size 64 \
+    --lr_init 1e-3 --num_workers 8 \
+    --rand_seed 123 --metric_name auroc --data_augment \
+    --temporal_attn --temporal_attn_heads 4 --tattn_n_layers 1 \
+    --save_dir runs/lst_tattn_tusz60_s123
+```
+
+For the published 3-seed mean, swap `--rand_seed` to `123`/`456`/`789`.
+
+### Notes for the friend
+
+- **aux loss is off.** Round 1 swept `aux_type ∈ {none, bce, entropy}`;
+  `none` was best on 60s. The `--aux_type none` flag is therefore the
+  default for all the winning configs.
+- **Two `attention` modules, different axes.** `tattn` mixes the
+  time axis; PMA pools the channel axis. They are complementary, not
+  redundant. Keep them as separate forward stages in code (different
+  tensor shapes, different roles) but you can group them conceptually
+  as "two attention components" in writeups.
+- **F1 has higher variance than AUROC** (std 0.052 vs 0.004 across
+  s123/s456/s789). Report both with std; reviewers will ask.
+- **CLI flags new in this branch** (all default to off):
+  `--temporal_attn`, `--temporal_attn_heads`, `--tattn_n_layers`,
+  `--tattn_pos_enc`, `--tattn_position`, `--tattn_causal`,
+  `--use_fft_mixer`, `--readout_concat`.
+

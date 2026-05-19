@@ -285,6 +285,46 @@ def get_args():
                         default=False,
                         action='store_true',
                         help='Skip mid-training test-set evaluation (logged but unused for selection).')
+    parser.add_argument('--readout_concat',
+                        default=False,
+                        action='store_true',
+                        help='LightSTHyper: concat raw Mamba pooled features to PMA readout '
+                             'before the final classifier (GRU-GCN concat=True analog).')
+    parser.add_argument('--temporal_attn',
+                        default=False,
+                        action='store_true',
+                        help='LightSTHyper Hybrid A: add per-channel T×T pairwise temporal '
+                             'attention layer AFTER the hyperedge stack (before PMA). '
+                             'Preserves M map / interpretability.')
+    parser.add_argument('--temporal_attn_heads',
+                        type=int,
+                        default=4,
+                        help='n_heads for --temporal_attn MHA.')
+    parser.add_argument('--tattn_n_layers',
+                        type=int,
+                        default=1,
+                        help='Number of stacked TemporalAttentionLayer (only used if --temporal_attn).')
+    parser.add_argument('--tattn_pos_enc',
+                        default=False,
+                        action='store_true',
+                        help='LightSTHyper Hybrid A: add learnable absolute position '
+                             'embedding for T inside the temporal attention layer.')
+    parser.add_argument('--tattn_position',
+                        type=str,
+                        default='after',
+                        choices=('after', 'before'),
+                        help='LightSTHyper Hybrid A: apply temporal attention BEFORE or '
+                             'AFTER the hyperedge stack (default after).')
+    parser.add_argument('--tattn_causal',
+                        default=False,
+                        action='store_true',
+                        help='LightSTHyper Hybrid A: lower-triangular causal mask in '
+                             'temporal attention (matches uni-directional Mamba).')
+    parser.add_argument('--use_fft_mixer',
+                        default=False,
+                        action='store_true',
+                        help='LightSTHyper: add FFT mixer layer over T axis after the '
+                             'hyperedge stack (AFNO-style learnable spectral filter).')
     parser.add_argument(
         '--patience',
         type=int,

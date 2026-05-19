@@ -14,7 +14,8 @@ class CNN_LSTM(nn.Module):
         if dataset == 'TUSZ':
             self.fc1 = nn.Linear(32*48*7, 512)
         else:
-            self.fc1 = nn.Linear(17856 , 512)
+            # CHB-MIT (22 ch, 100-dim): after 2x conv3x3 + maxpool2x2 → (32, 9, 48) → 13824.
+            self.fc1 = nn.Linear(32*9*48, 512)
 
         self.lstm = nn.LSTM(input_size=512, hidden_size=128, num_layers=2)
         self.fc2 = nn.Linear(128, num_classes)

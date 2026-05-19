@@ -44,7 +44,11 @@ for k in keys:
     if isinstance(v, bool):
         if v: print(f"--{k}")
     elif v is not None:
-        print(f"--{k} {v}")
+        # Print flag and value on SEPARATE lines so mapfile keeps them as
+        # distinct array elements (otherwise argparse sees "--dataset CHBMIT"
+        # as a single token and rejects it).
+        print(f"--{k}")
+        print(v)
 PY
 mapfile -t EXTRA_ARGS < /tmp/test_args_$$.sh
 rm -f /tmp/test_args_$$.sh

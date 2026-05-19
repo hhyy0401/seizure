@@ -281,6 +281,87 @@ class SpatioTemporalHyperedgeBlock(nn.Module):
         return out, M
 
 
+class TemporalAttentionLayer(nn.Module):
+    """Per-channel T×T pairwise temporal attention.
+
+    Hybrid A: borrowed from AxialPairwiseBlock's temporal half, intended to
+    be applied AFTER the SpatioTemporalHyperedgeBlock stack to add long-range
+    bidirectional temporal mixing without breaking the hyperedge bottleneck
+    (M map is still produced by the hyperedge layers — interpretability ✓).
+
+    Optional knobs:
+      - use_pos_enc: learnable absolute position embedding for T (gives the
+                     MHA ordering info that it otherwise lacks).
+      - causal:      lower-triangular attention mask — matches Mamba uni-
+                     directionality.
+
+    Input/Output: (B, T, N, d).
+    """
+
+    def __init__(self, d: int, n_heads: int = 4,
+                 max_T: int = 128, use_pos_enc: bool = False,
+                 causal: bool = False):
+        super().__init__()
+        assert d % n_heads == 0, f"d={d} must divide n_heads={n_heads}"
+        self.d = d
+        self.mha = nn.MultiheadAttention(d, n_heads, batch_first=True)
+        self.norm = nn.LayerNorm(d)
+        self.causal = causal
+        self.use_pos_enc = use_pos_enc
+        if use_pos_enc:
+            self.pos_emb = nn.Parameter(torch.randn(max_T, d) * 0.02)
+        else:
+            self.pos_emb = None
+
+    def forward(self, H_seq: torch.Tensor) -> torch.Tensor:
+        # H_seq: (B, T, N, d)
+        B, T, N, d = H_seq.shape
+        # Per-channel temporal mixing: reshape to (B*N, T, d).
+        h = H_seq.permute(0, 2, 1, 3).contiguous().reshape(B * N, T, d)
+        if self.pos_emb is not None:
+            h = h + self.pos_emb[:T].unsqueeze(0)
+        attn_mask = None
+        if self.causal:
+            attn_mask = torch.triu(
+                torch.ones(T, T, device=h.device, dtype=torch.bool),
+                diagonal=1,
+            )
+        h_attn, _ = self.mha(h, h, h, attn_mask=attn_mask, need_weights=False)
+        h = self.norm(h + h_attn)  # residual + LN
+        return h.reshape(B, N, T, d).permute(0, 2, 1, 3).contiguous()
+
+
+class FFTMixerLayer(nn.Module):
+    """Per-channel FFT mixer (AFNO-style) over the time axis.
+
+    Cheap O(T log T) frequency-domain mixing as a complement (or alternative)
+    to T×T attention. Uses a learnable complex spectral filter applied to
+    rFFT coefficients, then iFFT back to time domain. Residual + LN.
+
+    Input/Output: (B, T, N, d).
+    """
+
+    def __init__(self, d: int, max_T: int = 128):
+        super().__init__()
+        max_F = max_T // 2 + 1
+        # Learnable complex filter (real & imag parts stacked).
+        self.spectral_weight = nn.Parameter(torch.ones(max_F, d, 2) * 0.5)
+        self.norm = nn.LayerNorm(d)
+
+    def forward(self, H_seq: torch.Tensor) -> torch.Tensor:
+        # H_seq: (B, T, N, d)
+        B, T, N, d = H_seq.shape
+        h = H_seq.permute(0, 2, 1, 3).contiguous()                  # (B, N, T, d)
+        h_fft = torch.fft.rfft(h, dim=2)                            # (B, N, F, d) complex
+        F = h_fft.shape[2]
+        w = self.spectral_weight[:F]                                # (F, d, 2)
+        w_c = torch.complex(w[..., 0], w[..., 1])                   # (F, d)
+        h_fft = h_fft * w_c.unsqueeze(0).unsqueeze(0)
+        h = torch.fft.irfft(h_fft, n=T, dim=2)                      # (B, N, T, d)
+        h = h.permute(0, 2, 1, 3).contiguous()                      # (B, T, N, d)
+        return self.norm(h + H_seq)
+
+
 class AxialPairwiseBlock(nn.Module):
     """Axial pairwise self-attention: spatial (per t) + temporal (per n).
 
@@ -644,6 +725,14 @@ class LightSTHyper(nn.Module):
         use_node_emb: bool = False,
         timesnet_k: int = 2,
         aux_type: str = "none",
+        readout_concat: bool = False,
+        temporal_attn: bool = False,
+        temporal_attn_heads: int = 4,
+        tattn_n_layers: int = 1,
+        tattn_pos_enc: bool = False,
+        tattn_position: str = "after",
+        tattn_causal: bool = False,
+        use_fft_mixer: bool = False,
     ):
         super().__init__()
         self.n_nodes = n_nodes
@@ -651,6 +740,12 @@ class LightSTHyper(nn.Module):
         self.backbone_type = backbone_type
         assert aux_type in ("none", "bce", "entropy")
         self.aux_type = aux_type
+        self.readout_concat = readout_concat
+        self.use_temporal_attn = temporal_attn
+        assert tattn_position in ("after", "before"), \
+            f"tattn_position must be 'after' or 'before', got {tattn_position}"
+        self.tattn_position = tattn_position
+        self.use_fft_mixer = use_fft_mixer
 
         self.input_norm = InputInstanceNorm() if use_input_norm else nn.Identity()
 
@@ -691,11 +786,28 @@ class LightSTHyper(nn.Module):
             layers.append(make_block(d_in, d_hidden))
         self.hyper_layers = nn.ModuleList(layers)
 
+        # Hybrid A: optional post-hyperedge per-channel T×T temporal mixer.
+        if temporal_attn:
+            self.temporal_attn_layers = nn.ModuleList([
+                TemporalAttentionLayer(
+                    d_hidden, n_heads=temporal_attn_heads,
+                    use_pos_enc=tattn_pos_enc, causal=tattn_causal,
+                )
+                for _ in range(tattn_n_layers)
+            ])
+        # FFT mixer (frequency-domain) — applied serially AFTER tattn (or
+        # standalone if tattn is off). Cheap O(T log T) alternative branch.
+        if use_fft_mixer:
+            self.fft_mixer = FFTMixerLayer(d_hidden)
+
         self.pma_seeds = nn.Parameter(torch.randn(n_pma_seeds, d_hidden) * 0.02)
         self.pma_norm = nn.LayerNorm(d_hidden)
 
         self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(d_hidden * n_pma_seeds, n_classes)
+        classifier_in = d_hidden * n_pma_seeds
+        if readout_concat:
+            classifier_in += d_model    # raw Mamba pooled skip
+        self.classifier = nn.Linear(classifier_in, n_classes)
 
         # Per-edge classifier used only for aux_type == "bce".
         self.aux_classifier = (
@@ -750,16 +862,32 @@ class LightSTHyper(nn.Module):
     def forward(self, x: torch.Tensor):
         # x: (B, N, T, d_input) → H: (B, T, N, d)
         x = self.input_norm(x)
-        H_seq = self.backbone(x)
+        H_raw = self.backbone(x)                                       # (B, T, N, d_model) pre-hyperedge
         if self.use_node_emb:
             # H_seq: (B, T, N, d); node_emb: (N, d) → broadcast on B, T.
-            H_seq = H_seq + self.node_emb.unsqueeze(0).unsqueeze(0)
+            H_seq = H_raw + self.node_emb.unsqueeze(0).unsqueeze(0)
+        else:
+            H_seq = H_raw
+        # Hybrid A: optional T×T temporal mixer — position={before, after}
+        # relative to the hyperedge stack.
+        if self.use_temporal_attn and self.tattn_position == "before":
+            for tlayer in self.temporal_attn_layers:
+                H_seq = tlayer(H_seq)
         for layer in self.hyper_layers:
             H_seq, _ = layer(H_seq)
+        if self.use_temporal_attn and self.tattn_position == "after":
+            for tlayer in self.temporal_attn_layers:
+                H_seq = tlayer(H_seq)
+        if self.use_fft_mixer:
+            H_seq = self.fft_mixer(H_seq)
         # Time has been mixed inside the hyperedge — use temporal mean
         # rather than last-frame to keep the full-clip integration.
         H_pool = H_seq.mean(dim=1)                                     # (B, N, d)
-        z = self.pma_readout(H_pool)
+        z = self.pma_readout(H_pool)                                   # (B, n_seeds * d)
+        if self.readout_concat:
+            # GRU-GCN concat=True analog: classifier sees raw Mamba pooled.
+            raw_pool = H_raw.mean(dim=(1, 2))                          # (B, d_model)
+            z = torch.cat([z, raw_pool], dim=-1)
         return self.classifier(self.dropout(z)), H_pool
 
 
@@ -792,6 +920,14 @@ class LightSTHyper_classification(nn.Module):
             use_node_emb=getattr(args, "use_node_emb", False),
             timesnet_k=getattr(args, "timesnet_k", 2),
             aux_type=getattr(args, "aux_type", "none"),
+            readout_concat=getattr(args, "readout_concat", False),
+            temporal_attn=getattr(args, "temporal_attn", False),
+            temporal_attn_heads=getattr(args, "temporal_attn_heads", 4),
+            tattn_n_layers=getattr(args, "tattn_n_layers", 1),
+            tattn_pos_enc=getattr(args, "tattn_pos_enc", False),
+            tattn_position=getattr(args, "tattn_position", "after"),
+            tattn_causal=getattr(args, "tattn_causal", False),
+            use_fft_mixer=getattr(args, "use_fft_mixer", False),
         )
 
     def forward(self, input_seq, seq_lengths, adj_unused=None):

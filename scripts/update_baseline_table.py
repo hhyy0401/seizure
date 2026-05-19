@@ -26,6 +26,7 @@ from statistics import mean, stdev
 
 RUNS_ROOT = "/storage/scratch1/3/hkim3239/eeg/runs"
 MD_PATH   = "/storage/project/r-nimam6-0/hkim3239/disease/docs/BASELINE_TABLE.md"
+TEX_PATH  = "/storage/project/r-nimam6-0/hkim3239/disease/paper/main_results.tex"
 USER      = "hkim3239"
 
 # CHB-MIT 12s s123 — ran on an external machine, manually pasted by user.
@@ -37,7 +38,8 @@ EXTERNAL_S123 = {
     "dcrnn": (0.883, 0.138),
 }
 
-MODELS = ("lstm", "cnnlstm", "BIOT", "dcrnn", "gru_gcn", "evolvegcn", "graphs4mer")
+MODELS = ("lstm", "cnnlstm", "BIOT", "dcrnn", "gru_gcn", "evolvegcn", "graphs4mer",
+          "labram", "eegpt")
 
 # --- LightSTHyper reference rows (do not recompute, just pin) ---
 LSH_ROWS = [
@@ -81,7 +83,7 @@ def gather_runs():
     """
     pat = re.compile(
         r"^(?P<model>" + "|".join(MODELS) + r")"
-        r"_(?P<dset>tusz|chb)(?P<clip>12|60)"
+        r"_(?P<dset>tusz|chbmit|chb)(?P<clip>12|60)"
         r"_s(?P<seed>\d+)"
         r"_(?P<jid>\d+)$"
     )
@@ -93,10 +95,20 @@ def gather_runs():
         if not m:
             continue
         d = m.groupdict()
+        # Normalize chbmit -> chb so groupings stay consistent.
+        if d["dset"] == "chbmit":
+            d["dset"] = "chb"
         logs = glob.glob(os.path.join(RUNS_ROOT, name, "**", "info.log"), recursive=True)
         if not logs:
             continue
-        r = parse_test_line(logs[0])
+        # Prefer the info.log that has a TEST line (handles the case where a
+        # walltime-killed training run was resurrected by a separate test-only
+        # sbatch that wrote a nested info.log).
+        r = None
+        for lp in sorted(logs, key=os.path.getmtime, reverse=True):
+            r = parse_test_line(lp)
+            if r is not None:
+                break
         if r is None:
             continue
         key = (d["model"], d["dset"], d["clip"])
@@ -163,8 +175,8 @@ def render_current_table(agg_map):
         ("LSTM",       "lstm"),
         ("CNN-LSTM",   "cnnlstm"),
         ("BIOT",       "BIOT"),
-        ("LaBraM",     None),
-        ("EEGPT",      None),
+        ("LaBraM",     "labram"),
+        ("EEGPT",      "eegpt"),
         ("EvolveGCN",  "evolvegcn"),
         ("DCRNN",      "dcrnn"),
         ("GRAPHS4MER", "graphs4mer"),
@@ -252,6 +264,127 @@ def get_squeue_snapshot():
     return running, pending
 
 
+def render_latex_main_table(agg_map):
+    """
+    Paper-ready LaTeX main results table.
+    Bolds the per-column best (mean AUROC / F1), underlines the 2nd best.
+    Excludes "still running" cells (—).
+    """
+    # row order — display name and key into agg_map; tuple of (label, key)
+    rows = [
+        ("LSTM",       "lstm"),
+        ("CNN-LSTM",   "cnnlstm"),
+        ("BIOT",       "BIOT"),
+        ("LaBraM",     "labram"),
+        ("EEGPT",      "eegpt"),
+        ("EvolveGCN",  "evolvegcn"),
+        ("DCRNN",      "dcrnn"),
+        ("GRAPHS4MER", "graphs4mer"),
+        ("GRU-GCN",    "gru_gcn"),
+    ]
+    # LightSTHyper rows pinned (best across own seeds; from RESULTS.md)
+    lsh_rows = [
+        ("LightSTHyper ($E_h{=}1$)",
+         ("898", "3"), ("519", "19"),
+         ("877", "17"), ("569", "17"),
+         ("898", "6"), ("142", "7")),
+        ("LightSTHyper ($E_h{=}2$)",
+         ("892", "6"), ("440", "23"),
+         ("848", "19"), ("463", "40"),
+         ("898", "6"), ("154", "25")),
+        ("LightSTHyper ($E_h{=}3$)",
+         ("889", "6"), ("504", "29"),
+         ("877", "5"), ("537", "39"),
+         ("904", "7"), ("134", "21")),
+    ]
+    # Build a list of all rows with parsed (auroc, f1) tuples for each column.
+    # Columns: (tusz12_auroc, tusz12_f1, tusz60_auroc, tusz60_f1, chb12_auroc, chb12_f1)
+    def parse_mean_std(s):
+        """'0.898±0.003' -> (0.898, 0.003); '0.879' -> (0.879, None)"""
+        if s in (None, "—"):
+            return None
+        m = re.match(r"([0-9.]+)±([0-9.]+)", s)
+        if m:
+            return (float(m.group(1)), float(m.group(2)))
+        try:
+            return (float(s), None)
+        except ValueError:
+            return None
+
+    table_rows = []   # list of (label, [(mean,std) per col, ...])
+    for label, key in rows:
+        cols = []
+        for dset, clip in [("tusz", "12"), ("tusz", "60"), ("chb", "12")]:
+            a = agg_map.get((key, dset, clip))
+            if a is None:
+                cols.extend([None, None])
+                continue
+            # Skip n=1 columns (no std → hide to avoid misleading the reader)
+            if a["n"] < 2:
+                cols.extend([None, None])
+                continue
+            cols.append(parse_mean_std(a["auroc_str"]))
+            cols.append(parse_mean_std(a["f1_str"]))
+        table_rows.append((label, cols))
+    # Append LightSTHyper rows (already in mean±std form, stored as ints x1000)
+    for lsh in lsh_rows:
+        label = lsh[0]
+        cols = []
+        for i in range(1, 7):
+            mean_s, std_s = lsh[i]
+            cols.append((int(mean_s) / 1000.0, int(std_s) / 1000.0))
+        table_rows.append((label, cols))
+
+    # Find best (max) and 2nd-best per column
+    n_cols = 6
+    best = [None] * n_cols
+    second = [None] * n_cols
+    for c in range(n_cols):
+        vals = [(r_idx, table_rows[r_idx][1][c][0])
+                for r_idx in range(len(table_rows))
+                if table_rows[r_idx][1][c] is not None]
+        if not vals:
+            continue
+        vals.sort(key=lambda x: -x[1])
+        best[c] = vals[0][0]
+        if len(vals) > 1 and vals[1][1] != vals[0][1]:
+            second[c] = vals[1][0]
+
+    def fmt_cell(val, c, r):
+        if val is None:
+            return "---"
+        mean_v, std_v = val
+        if std_v is None:
+            base = f"{mean_v:.3f}"
+        else:
+            base = f"{mean_v:.3f}$\\pm${std_v:.3f}"
+        if r == best[c]:
+            return r"\textbf{" + base + "}"
+        if r == second[c]:
+            return r"\underline{" + base + "}"
+        return base
+
+    lines = []
+    lines.append("% Auto-generated by scripts/update_baseline_table.py")
+    lines.append("% Source: Phoenix runs under /storage/scratch1/3/hkim3239/eeg/runs/")
+    lines.append("% TUSZ v2.0.6 (v1.5.2 is discontinued per Kotoge et al. README).")
+    lines.append("% CHB-MIT 12s s123 for LSTM/BIOT/DCRNN: externally supplied by user.")
+    lines.append("\\begin{tabular}{lcccccc}")
+    lines.append("\\toprule")
+    lines.append("Method & \\multicolumn{2}{c}{TUSZ 12s} & \\multicolumn{2}{c}{TUSZ 60s} & \\multicolumn{2}{c}{CHB-MIT 12s} \\\\")
+    lines.append("\\cmidrule(lr){2-3} \\cmidrule(lr){4-5} \\cmidrule(lr){6-7}")
+    lines.append(" & AUROC & F1 & AUROC & F1 & AUROC & F1 \\\\")
+    lines.append("\\midrule")
+    for r_idx, (label, cols) in enumerate(table_rows):
+        if "LightSTHyper" in label and r_idx > 0 and "LightSTHyper" not in table_rows[r_idx - 1][0]:
+            lines.append("\\midrule")
+        cells = [fmt_cell(cols[c], c, r_idx) for c in range(n_cols)]
+        lines.append(f"{label} & " + " & ".join(cells) + " \\\\")
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    return "\n".join(lines)
+
+
 def render_job_board():
     running, pending = get_squeue_snapshot()
     lines = ["### Running"]
@@ -306,7 +439,14 @@ def main():
     with open(MD_PATH, "w") as f:
         f.write(md)
 
+    # Also write a paper-ready LaTeX snippet.
+    latex_tbl = render_latex_main_table(agg)
+    os.makedirs(os.path.dirname(TEX_PATH), exist_ok=True)
+    with open(TEX_PATH, "w") as f:
+        f.write(latex_tbl + "\n")
+
     print(f"[{ts}] updated {MD_PATH}")
+    print(f"[{ts}] updated {TEX_PATH}")
     print(f"  groups aggregated: {len(agg)}")
     for key, a in sorted(agg.items()):
         print(f"    {key}: n={a['n']}  AUROC={a['auroc_str']}  F1={a['f1_str']}")

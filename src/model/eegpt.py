@@ -24,10 +24,12 @@ import torch.nn as nn
 
 from model.eegpt_pretrained.EEGPT_mcae_finetune import EEGPTClassifier, CHANNEL_DICT
 
-# Canonical 58-channel name list EEGPT was pretrained on, in the order the
-# CHANNEL_DICT enumerates them. The chan_conv layer (Conv1d) learns the
-# in_channels -> 58 projection so any source montage can ride this list.
-_EEGPT_58 = sorted(CHANNEL_DICT.keys(), key=lambda k: CHANNEL_DICT[k])
+# CHANNEL_DICT in the vendored EEGPT code actually has 62 entries, but the
+# pretrained encoder name ("eegpt_mcae_58chs_4s_large4E") + img_size[0]=58
+# tells us only the first 58 chan_embed slots were ever exercised during
+# pretraining. Pass exactly 58 names so chan_ids has the same length as the
+# img_size[0]=58 spatial axis the patch_embed produces.
+_EEGPT_58 = sorted(CHANNEL_DICT.keys(), key=lambda k: CHANNEL_DICT[k])[:58]
 
 
 def _load_eegpt_pretrained(model: nn.Module, ckpt_path: str) -> None:

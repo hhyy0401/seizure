@@ -44,16 +44,33 @@ def _load_labram_pretrained(model: nn.Module, ckpt_path: str) -> None:
             if k in sd and isinstance(sd[k], dict):
                 sd = sd[k]
                 break
-    # The pretrained LaBraM-base was trained with ~8-second windows, so its
-    # temporal_embedding has fewer slots than we need at 12 or 60 seconds.
-    # 1-D interpolate so strict=False actually absorbs the pretrained signal
+    # Adjust shapes so strict=False actually absorbs the pretrained signal
     # instead of silently dropping it on shape mismatch.
+    #   * position_embedding is the per-channel embedding in braindecode 1.3.x
+    #     (sized for n_chans+1, not the original 128+1 canonical order).
+    #     We SLICE the first n_chans+1 pretrained slots — interpolation
+    #     would mix unrelated electrodes.
+    #   * temporal_embedding spans time patches (sized for n_patches+1) and the
+    #     pretrained window is ~8 s. We linearly INTERPOLATE so 12/60-s
+    #     windows still benefit from the pretrained temporal structure.
     model_sd = model.state_dict()
-    for k in ("position_embedding", "temporal_embedding"):
+    for k, mode in (("position_embedding", "slice"), ("temporal_embedding", "interp")):
         if k in sd and k in model_sd and sd[k].shape != model_sd[k].shape:
-            if sd[k].shape[0] == model_sd[k].shape[0] and sd[k].shape[2] == model_sd[k].shape[2]:
-                print(f"[LaBraM] interpolating {k}: {tuple(sd[k].shape)} -> {tuple(model_sd[k].shape)}")
-                sd[k] = _interp_1d(sd[k], model_sd[k].shape[1])
+            if sd[k].shape[0] != model_sd[k].shape[0] or sd[k].shape[2] != model_sd[k].shape[2]:
+                continue
+            target_len = model_sd[k].shape[1]
+            if mode == "slice":
+                src_len = sd[k].shape[1]
+                if src_len >= target_len:
+                    print(f"[LaBraM] slicing {k}: {tuple(sd[k].shape)} -> first {target_len}")
+                    sd[k] = sd[k][:, :target_len, :].clone()
+                else:
+                    print(f"[LaBraM] zero-padding {k}: {tuple(sd[k].shape)} -> {target_len}")
+                    pad = torch.zeros(1, target_len - src_len, sd[k].shape[2], dtype=sd[k].dtype)
+                    sd[k] = torch.cat([sd[k], pad], dim=1)
+            else:  # interp
+                print(f"[LaBraM] interpolating {k}: {tuple(sd[k].shape)} -> (1, {target_len}, {sd[k].shape[2]})")
+                sd[k] = _interp_1d(sd[k], target_len)
     miss, unexp = model.load_state_dict(sd, strict=False)
     print(f"[LaBraM] loaded {ckpt_path}")
     print(f"[LaBraM]   missing {len(miss)} keys (first 5): {miss[:5]}")

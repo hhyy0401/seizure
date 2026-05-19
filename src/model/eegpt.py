@@ -22,7 +22,12 @@ import os
 import torch
 import torch.nn as nn
 
-from model.eegpt_pretrained.EEGPT_mcae_finetune import EEGPTClassifier
+from model.eegpt_pretrained.EEGPT_mcae_finetune import EEGPTClassifier, CHANNEL_DICT
+
+# Canonical 58-channel name list EEGPT was pretrained on, in the order the
+# CHANNEL_DICT enumerates them. The chan_conv layer (Conv1d) learns the
+# in_channels -> 58 projection so any source montage can ride this list.
+_EEGPT_58 = sorted(CHANNEL_DICT.keys(), key=lambda k: CHANNEL_DICT[k])
 
 
 def _load_eegpt_pretrained(model: nn.Module, ckpt_path: str) -> None:
@@ -60,6 +65,7 @@ class EEGPT_classification(nn.Module):
             in_channels=n_chans,
             img_size=[58, 256 * 4],
             patch_stride=64,
+            use_channels_names=_EEGPT_58,
             use_chan_conv=True,
             use_predictor=True,
             use_mean_pooling=True,

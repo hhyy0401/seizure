@@ -673,9 +673,12 @@ class Conv1dWithConstraint(nn.Conv1d):
         self.doWeightNorm = doWeightNorm
         super(Conv1dWithConstraint, self).__init__(*args, **kwargs)
         
-    @autocast(True)
+    # @autocast(True) removed — it pushed an fp16 context that mismatched
+    # the downstream Conv2d weights (which stay fp32 by default), raising
+    # "Input type (Half) and bias type (float)" when our wrapper drives the
+    # model in plain fp32.
     def forward(self, x):
-        if self.doWeightNorm: 
+        if self.doWeightNorm:
             self.weight.data = torch.renorm(
                 self.weight.data, p=2, dim=0, maxnorm=self.max_norm
             )
@@ -687,9 +690,12 @@ class LinearWithConstraint(nn.Linear):
         self.doWeightNorm = doWeightNorm
         super(LinearWithConstraint, self).__init__(*args, **kwargs)
 
-    @autocast(True)
+    # @autocast(True) removed — it pushed an fp16 context that mismatched
+    # the downstream Conv2d weights (which stay fp32 by default), raising
+    # "Input type (Half) and bias type (float)" when our wrapper drives the
+    # model in plain fp32.
     def forward(self, x):
-        if self.doWeightNorm: 
+        if self.doWeightNorm:
             self.weight.data = torch.renorm(
                 self.weight.data, p=2, dim=0, maxnorm=self.max_norm
             )

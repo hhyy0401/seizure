@@ -22,6 +22,21 @@ import torch.nn as nn
 from braindecode.models import Labram
 
 
+def _interp_1d(t: torch.Tensor, target_len: int) -> torch.Tensor:
+    """Interpolate a positional / temporal embedding along its sequence axis.
+
+    t: (1, L_old, D)  ->  (1, L_new, D)  via cubic interpolation.
+    Used to stretch the pretrained 8-second temporal embedding to our
+    12/60-s clip length.
+    """
+    if t.shape[1] == target_len:
+        return t
+    # (1, L, D) -> (1, D, L) -> interpolate L -> (1, D, target) -> (1, target, D)
+    x = t.permute(0, 2, 1).contiguous()
+    x = nn.functional.interpolate(x, size=target_len, mode="linear", align_corners=False)
+    return x.permute(0, 2, 1).contiguous()
+
+
 def _load_labram_pretrained(model: nn.Module, ckpt_path: str) -> None:
     sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if isinstance(sd, dict):
@@ -29,6 +44,16 @@ def _load_labram_pretrained(model: nn.Module, ckpt_path: str) -> None:
             if k in sd and isinstance(sd[k], dict):
                 sd = sd[k]
                 break
+    # The pretrained LaBraM-base was trained with ~8-second windows, so its
+    # temporal_embedding has fewer slots than we need at 12 or 60 seconds.
+    # 1-D interpolate so strict=False actually absorbs the pretrained signal
+    # instead of silently dropping it on shape mismatch.
+    model_sd = model.state_dict()
+    for k in ("position_embedding", "temporal_embedding"):
+        if k in sd and k in model_sd and sd[k].shape != model_sd[k].shape:
+            if sd[k].shape[0] == model_sd[k].shape[0] and sd[k].shape[2] == model_sd[k].shape[2]:
+                print(f"[LaBraM] interpolating {k}: {tuple(sd[k].shape)} -> {tuple(model_sd[k].shape)}")
+                sd[k] = _interp_1d(sd[k], model_sd[k].shape[1])
     miss, unexp = model.load_state_dict(sd, strict=False)
     print(f"[LaBraM] loaded {ckpt_path}")
     print(f"[LaBraM]   missing {len(miss)} keys (first 5): {miss[:5]}")
